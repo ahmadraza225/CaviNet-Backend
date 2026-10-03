@@ -15,7 +15,7 @@ class DashboardStats(BaseModel):
 
 
 class RecentCase(BaseModel):
-    """One of the most recent cases. Filled from Phase 4, when scans become cases."""
+    """One of the most recent cases."""
 
     case_id: uuid.UUID
     patient_id: uuid.UUID

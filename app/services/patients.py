@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.models import AuditAction, Patient, User
 from app.schemas.patients import PatientCreate, PatientUpdate, normalize_mr_number
-from app.services import audit, storage
+from app.services import audit, cases, storage
 from app.services.errors import Conflict, InvalidInput, NotFound
 
 logger = logging.getLogger(__name__)
@@ -172,23 +172,23 @@ def update_patient(db: Session, actor: User, patient: Patient, data: PatientUpda
     return patient
 
 
-def patient_file_paths(patient: Patient) -> list[Path]:
-    """Everything on disk that belongs to the patient (see app.services.storage)."""
-    return [storage.patient_dir(patient.id)]
+def patient_file_paths(db: Session, patient: Patient) -> list[Path]:
+    """Everything on disk that belongs to the patient: the folder of each case."""
+    return cases.case_dirs_for_patient(db, patient)
 
 
 def delete_patient(db: Session, actor: User, patient: Patient, *, confirm: str | None) -> None:
     """FR-03.2: permanent delete. The caller must send the patient's MR number as `confirm`.
 
-    The database rows go first (scans, results and reports from Phase 4 follow through
-    ON DELETE CASCADE); the files are removed once that is committed.
+    The database rows go first (cases, their timelines and notifications follow through
+    ON DELETE CASCADE); the case folders are removed once that is committed.
     """
     if normalize_mr_number(confirm or "") != patient.mr_number:
         raise InvalidInput(
             "Type the patient's MR number to confirm the deletion.",
             code="confirmation_required",
         )
-    paths = patient_file_paths(patient)
+    paths = patient_file_paths(db, patient)
     audit.record(
         db,
         AuditAction.PATIENT_DELETED,

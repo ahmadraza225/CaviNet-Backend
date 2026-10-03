@@ -1,1 +1,1 @@
-"""Background worker (RQ). Analysis jobs are added in Phases 4 and 5."""
+"""Background worker (RQ): runs the analysis job for each queued case."""

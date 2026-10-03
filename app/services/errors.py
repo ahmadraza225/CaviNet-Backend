@@ -45,3 +45,13 @@ class InvalidInput(ServiceError):
 class Locked(ServiceError):
     status_code = 423
     code = "account_locked"
+
+
+class PayloadTooLarge(ServiceError):
+    status_code = 413
+    code = "upload_too_large"
+
+
+class UnsupportedMediaType(ServiceError):
+    status_code = 415
+    code = "unsupported_media_type"

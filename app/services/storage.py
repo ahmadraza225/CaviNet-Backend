@@ -1,6 +1,11 @@
-"""Files under DATA_DIR. Every file that belongs to a patient (scans, results, reports, from
-Phase 4 on) lives under `DATA_DIR/patients/<patient id>/`, so deleting a patient removes one
-directory (FR-03.2, NFR-3). Paths use the patient's random id, never their name or MR number.
+"""Files under DATA_DIR (NFR-3).
+
+    DATA_DIR/cases/<case id>/dicom/00001.dcm …   de-identified slices of one upload (FR-04.4)
+    DATA_DIR/staging/<random id>/                 an upload while it is being received and
+                                                  checked; deleted as soon as it is processed
+
+Paths use random ids, never names or MR numbers. Deleting a patient removes the folder of
+each of their cases (FR-03.2).
 """
 
 import logging
@@ -18,8 +23,23 @@ def data_root() -> Path:
     return Path(get_settings().data_dir).resolve()
 
 
-def patient_dir(patient_id: uuid.UUID) -> Path:
-    return data_root() / "patients" / str(patient_id)
+def case_dir(case_id: uuid.UUID) -> Path:
+    return data_root() / "cases" / str(case_id)
+
+
+def case_dicom_dir(case_id: uuid.UUID) -> Path:
+    return case_dir(case_id) / "dicom"
+
+
+def staging_root() -> Path:
+    return data_root() / "staging"
+
+
+def new_staging_dir() -> Path:
+    """A fresh folder for one incoming upload."""
+    path = staging_root() / uuid.uuid4().hex
+    path.mkdir(parents=True)
+    return path
 
 
 def remove_paths(paths: Iterable[Path]) -> list[Path]:

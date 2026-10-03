@@ -1,7 +1,9 @@
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
+import fakeredis
 import pytest
 from fastapi.testclient import TestClient
+from rq import SimpleWorker
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,7 +14,10 @@ from app.core.database import dispose_engine, get_engine, get_sessionmaker
 from app.core.redis import close_redis
 from app.main import create_app
 from app.models import AuditLog, Base, Role, User
+from app.services import cases as cases_service
 from app.services.users import build_user
+from app.synthetic_dicom import SyntheticStudy, zip_files
+from app.workers.queue import get_analysis_queue
 
 TEST_SECRET_KEY = "test-secret-key-0123456789-abcdefghijklmnopqrstuvwxyz"
 PASSWORD = "Passw0rd123"
@@ -31,6 +36,7 @@ def test_env(monkeypatch, tmp_path):
     monkeypatch.setenv("SECRET_KEY", TEST_SECRET_KEY)
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("STUB_STEP_SECONDS", "0")
     for name in ("ADMIN_EMAIL", "ADMIN_PASSWORD", "DEMO_DOCTOR_EMAIL", "DEMO_DOCTOR_PASSWORD"):
         monkeypatch.delenv(name, raising=False)
     _clear_caches()
@@ -38,6 +44,20 @@ def test_env(monkeypatch, tmp_path):
     yield
     _clear_caches()
     clock.reset()
+
+
+@pytest.fixture(autouse=True)
+def analysis_queue(monkeypatch):
+    """Uploads enqueue analysis jobs on an in-memory Redis; tests run them explicitly
+    (run_queued_jobs) to step the case through the worker's statuses."""
+    queue = get_analysis_queue(connection=fakeredis.FakeStrictRedis())
+    monkeypatch.setattr(cases_service, "get_analysis_queue", lambda: queue)
+    return queue
+
+
+def run_queued_jobs(queue) -> None:
+    """Run every queued job in this process, as the worker container would."""
+    SimpleWorker([queue], connection=queue.connection).work(burst=True)
 
 
 @pytest.fixture
@@ -145,3 +165,38 @@ def set_env(monkeypatch, **values: str) -> None:
     for name, value in values.items():
         monkeypatch.setenv(name, value)
     get_settings.cache_clear()
+
+
+PATIENT = {
+    "full_name": "Amina Bibi",
+    "mr_number": "MR-1001",
+    "date_of_birth": "1975-04-12",
+    "sex": "female",
+    "phone": "+92 300 1234567",
+    "notes": "Referred from OPD.",
+}
+
+
+def create_patient(client: TestClient, headers: dict[str, str], **overrides) -> dict:
+    response = client.post("/api/patients", json={**PATIENT, **overrides}, headers=headers)
+    assert response.status_code == 201, response.json()
+    return response.json()
+
+
+def scan_zip(slices: int = 60, seed: str = "test", **series) -> bytes:
+    """A synthetic single-series CT scan as a .zip (valid with the defaults)."""
+    return zip_files(SyntheticStudy(seed).series(slices, **series))
+
+
+def upload(
+    client: TestClient,
+    headers: dict[str, str],
+    patient_id: str,
+    files: Iterable[tuple[str, bytes]],
+):
+    """POST the files to the upload endpoint as multipart/form-data (field "files")."""
+    return client.post(
+        f"/api/patients/{patient_id}/cases",
+        files=[("files", (name, data, "application/octet-stream")) for name, data in files],
+        headers=headers,
+    )

@@ -1,25 +1,29 @@
-"""Doctor dashboard figures (M-02). Case counts and recent cases stay zero/empty until
-Phase 4 adds scans and cases."""
+"""Doctor dashboard figures (M-02, FR-02.1 and FR-02.2)."""
 
 from sqlalchemy.orm import Session
 
+from app.core.clock import as_utc
 from app.schemas.dashboard import DashboardStats, RecentCase
-from app.services import patients
+from app.services import cases, patients
 
 RECENT_CASES_LIMIT = 10  # FR-02.2
 
 
 def stats(db: Session) -> DashboardStats:
     """FR-02.1."""
-    return DashboardStats(
-        total_patients=patients.count_patients(db),
-        scans_last_7_days=0,
-        cases_in_progress=0,
-        completed_cases=0,
-        failed_cases=0,
-    )
+    return DashboardStats(total_patients=patients.count_patients(db), **cases.counts(db))
 
 
 def recent_cases(db: Session, limit: int = RECENT_CASES_LIMIT) -> list[RecentCase]:
     """FR-02.2: newest first, at most `limit`."""
-    return []
+    return [
+        RecentCase(
+            case_id=case.id,
+            patient_id=patient.id,
+            patient_name=patient.full_name,
+            uploaded_at=as_utc(case.created_at),
+            status=case.status,
+            result=case.result_label,
+        )
+        for case, patient in cases.recent_cases(db, limit)
+    ]

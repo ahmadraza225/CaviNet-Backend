@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from app.core import clock
 from app.models import AuditAction
-from tests.conftest import PASSWORD, audit_entries, bearer, login, token_for
+from tests.conftest import PASSWORD, audit_entries, bearer, login, scan_zip, token_for, upload
 
 
 def test_fr09_2_every_audit_action_so_far_is_recorded(client, admin, doctor, db):
@@ -24,6 +24,7 @@ def test_fr09_2_every_audit_action_so_far_is_recorded(client, admin, doctor, db)
     ).json()
     patient_url = f"/api/patients/{patient['id']}"
     client.patch(patient_url, json={"phone": "0300 1234567"}, headers=doctor_headers)
+    upload(client, doctor_headers, patient["id"], [("scan.zip", scan_zip(50))])
     client.delete(f"{patient_url}?confirm=MR-1", headers=doctor_headers)
     login(client, "nobody@example.org", "Wrong-passw0rd")  # login_failure
     created = client.post(
