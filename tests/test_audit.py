@@ -5,10 +5,19 @@ from datetime import timedelta
 
 from app.core import clock
 from app.models import AuditAction
-from tests.conftest import PASSWORD, audit_entries, bearer, login, scan_zip, token_for, upload
+from tests.conftest import (
+    PASSWORD,
+    audit_entries,
+    bearer,
+    login,
+    run_queued_jobs,
+    scan_zip,
+    token_for,
+    upload,
+)
 
 
-def test_fr09_2_every_audit_action_so_far_is_recorded(client, admin, doctor, db):
+def test_fr09_2_every_audit_action_so_far_is_recorded(client, admin, doctor, db, analysis_queue):
     """Runs every logged action once and checks each produced an audit entry."""
     admin_headers = token_for(client, admin.email)
     doctor_headers = token_for(client, doctor.email)
@@ -24,7 +33,9 @@ def test_fr09_2_every_audit_action_so_far_is_recorded(client, admin, doctor, db)
     ).json()
     patient_url = f"/api/patients/{patient['id']}"
     client.patch(patient_url, json={"phone": "0300 1234567"}, headers=doctor_headers)
-    upload(client, doctor_headers, patient["id"], [("scan.zip", scan_zip(50))])
+    case = upload(client, doctor_headers, patient["id"], [("scan.zip", scan_zip(50))]).json()
+    run_queued_jobs(analysis_queue)
+    client.get(f"/api/cases/{case['id']}/result", headers=doctor_headers)  # result_viewed
     client.delete(f"{patient_url}?confirm=MR-1", headers=doctor_headers)
     login(client, "nobody@example.org", "Wrong-passw0rd")  # login_failure
     created = client.post(

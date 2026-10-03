@@ -45,10 +45,59 @@ class UploadDetails(BaseModel):
 
 
 class CaseResult(BaseModel):
+    """Summary on the case page; the full result is GET /api/cases/{id}/result."""
+
     label: str
     is_stub: bool
+    is_demo: bool
     analyser: str | None
     note: str | None
+    probability_tb_pct: float | None = None
+    confidence_pct: float | None = None
+    band: str | None = None
+
+
+class ValidatedPerformance(BaseModel):
+    """FR-06.3: the model's measured performance, from its model card."""
+
+    auc: float | None
+    sensitivity: float | None
+    specificity: float | None
+    cases: int | None
+    dataset: str | None
+
+
+class ResultModel(BaseModel):
+    name: str
+    version: str
+    trained_at: str | None
+    folds: int | None
+    is_demo: bool
+
+
+class ResultOut(BaseModel):
+    """FR-06.1 to FR-06.4 and FR-05.4/05.6 for one completed case."""
+
+    case_id: uuid.UUID
+    patient: CasePatient
+    predicted_class: str
+    probability_tb: float
+    probability_tb_pct: float
+    confidence_pct: float
+    band: str
+    inconclusive: bool
+    explanation: str
+    disclaimer: str
+    is_demo: bool
+    demo_banner: str | None
+    model: ResultModel
+    validated_performance: ValidatedPerformance
+    warnings: list[str]
+    processing_seconds: float | None
+    step_seconds: dict[str, float]
+    lung_volume_ml: float | None
+    preview_count: int
+    completed_at: datetime | None
 
 
 class CaseOut(BaseModel):
@@ -87,11 +136,16 @@ class CaseOut(BaseModel):
             )
         result = None
         if case.result_label:
+            details = case.result_details or {}
             result = CaseResult(
                 label=case.result_label,
                 is_stub=case.result_is_stub,
+                is_demo=case.model_is_demo,
                 analyser=case.analyser,
-                note=(case.result_details or {}).get("note"),
+                note=details.get("note"),
+                probability_tb_pct=details.get("probability_tb_pct"),
+                confidence_pct=details.get("confidence_pct"),
+                band=case.confidence_band,
             )
         return cls(
             id=case.id,

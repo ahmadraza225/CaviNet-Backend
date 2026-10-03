@@ -23,3 +23,4 @@ class RecentCase(BaseModel):
     uploaded_at: datetime
     status: str
     result: str | None = None
+    result_is_demo: bool = False

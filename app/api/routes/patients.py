@@ -56,6 +56,7 @@ def get_patient(patient_id: uuid.UUID, _: DoctorUser, db: DbSession) -> PatientD
             uploaded_at=as_utc(case.created_at),
             status=case.status,
             result=case.result_label,
+            result_is_demo=case.model_is_demo,
         )
         for case in cases_service.cases_for_patient(db, patient)
     ]

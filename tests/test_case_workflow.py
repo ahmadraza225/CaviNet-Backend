@@ -1,5 +1,5 @@
-"""M-08 case workflow: FR-08.1 statuses and timeline, the Phase 4 stub analyser, the worker
-job (FR-04.6), case pages, dashboard counts and deletion."""
+"""M-08 case workflow: FR-08.1 statuses and timeline, the analysis job (FR-04.6, M-05) with
+its failure handling (FR-05.5), case pages, dashboard counts and deletion."""
 
 import uuid
 from datetime import timedelta
@@ -10,7 +10,7 @@ from app.core import clock
 from app.models import Case, CaseEvent, CaseStatus, Notification
 from app.services import cases, storage
 from app.services.cases import InvalidTransition, set_status
-from app.workers import stub_analyser
+from app.workers import analysis
 from app.workers.jobs import analyse_case
 from tests.conftest import create_patient, run_queued_jobs, scan_zip, token_for, upload
 
@@ -69,7 +69,7 @@ def test_fr08_1_only_the_documented_transitions_are_allowed(db, doctor, current,
         db.expunge_all()
 
 
-# --- The stub analyser walks the statuses ---------------------------------------------------
+# --- The analysis job walks the statuses -----------------------------------------------------
 
 
 def test_fr08_1_worker_takes_the_case_to_completed_with_a_timestamped_timeline(
@@ -84,26 +84,6 @@ def test_fr08_1_worker_takes_the_case_to_completed_with_a_timestamped_timeline(
     times = [step["at"] for step in body["timeline"]]
     assert times == sorted(times) and all(t.endswith("Z") or "+00:00" in t for t in times)
     assert body["completed_at"] is not None
-
-
-def test_stub_result_is_clearly_flagged(client, doctor_headers, patient, analysis_queue):
-    case = queued_case(client, doctor_headers, patient["id"])
-    run_queued_jobs(analysis_queue)
-    body = get_case(client, doctor_headers, case["id"])
-    assert body["result"] == {
-        "label": "STUB",
-        "is_stub": True,
-        "analyser": "stub-analyser (Phase 4 placeholder)",
-        "note": "Placeholder from the Phase 4 stub analyser. No AI analysis was performed.",
-    }
-    assert body["timeline"][-1]["message"] == "STUB result: placeholder, not a diagnosis."
-
-
-def test_stub_pauses_between_steps_so_progress_can_be_seen(db, client, doctor_headers, patient):
-    case = queued_case(client, doctor_headers, patient["id"])
-    pauses: list[float] = []
-    stub_analyser.run(db, uuid.UUID(case["id"]), sleep=pauses.append)
-    assert pauses == [0.0, 0.0]  # STUB_STEP_SECONDS (0 in tests, 2 by default)
 
 
 def test_fr08_2_completion_notifies_the_uploading_doctor_only(
@@ -126,13 +106,13 @@ def test_fr08_2_analysis_failure_fails_the_case_and_notifies(
     client, doctor, doctor_headers, patient, analysis_queue, db
 ):
     case = queued_case(client, doctor_headers, patient["id"])
-    for path in storage.case_dicom_dir(uuid.UUID(case["id"])).glob("0000*.dcm"):
+    for path in storage.case_dicom_dir(uuid.UUID(case["id"])).glob("*.dcm"):
         path.unlink()  # the stored scan went missing
     run_queued_jobs(analysis_queue)
 
     body = get_case(client, doctor_headers, case["id"])
     assert body["status"] == "failed"
-    assert body["failure_reason"] == stub_analyser.MISSING_FILES
+    assert body["failure_reason"] == "No DICOM series was found in the stored scan."
     assert [s["status"] for s in body["timeline"]] == ORDER[:4] + ["failed"]
     assert body["result"] is None
     db.expire_all()
@@ -141,15 +121,122 @@ def test_fr08_2_analysis_failure_fails_the_case_and_notifies(
     ]
 
 
-def test_unexpected_worker_errors_fail_the_case(client, doctor_headers, patient, monkeypatch, db):
+class FlakyAnalyser:
+    """Wraps the real analyser; `prepare` raises for the first `failures` calls."""
+
+    def __init__(self, failures: int):
+        from app.services import model_store
+
+        self.real = model_store.get_analyser()
+        self.ensemble = self.real.ensemble
+        self.failures = failures
+        self.calls = 0
+
+    def prepare(self, dicom_dir, preview_dir):
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise RuntimeError("database connection lost")
+        return self.real.prepare(dicom_dir, preview_dir)
+
+    def infer(self, prepared):
+        return self.real.infer(prepared)
+
+
+def test_fr05_5_an_unexpected_error_is_retried_once(client, doctor_headers, patient, db):
     case = queued_case(client, doctor_headers, patient["id"])
-
-    def boom(_):
-        raise RuntimeError("disk on fire")
-
-    stub_analyser.run(db, uuid.UUID(case["id"]), sleep=boom)
+    flaky = FlakyAnalyser(failures=1)
+    pauses = []
+    status = analysis.run(
+        db, uuid.UUID(case["id"]), get_analyser=lambda: flaky, sleep=pauses.append
+    )
+    assert status == "completed" and flaky.calls == 2 and pauses == [0.0]
     body = get_case(client, doctor_headers, case["id"])
-    assert (body["status"], body["failure_reason"]) == ("failed", stub_analyser.UNEXPECTED)
+    assert [s["status"] for s in body["timeline"]] == [
+        "uploaded",
+        "validating",
+        "queued",
+        "preprocessing",
+        "preprocessing",
+        "analysing",
+        "completed",
+    ]
+    assert body["timeline"][4]["message"] == analysis.RETRYING
+
+
+def test_fr05_5_a_second_unexpected_error_fails_the_case(
+    client, doctor_headers, patient, db, caplog
+):
+    case = queued_case(client, doctor_headers, patient["id"])
+    flaky = FlakyAnalyser(failures=2)
+    analysis.run(db, uuid.UUID(case["id"]), get_analyser=lambda: flaky, sleep=lambda s: None)
+    body = get_case(client, doctor_headers, case["id"])
+    assert (body["status"], body["failure_reason"]) == ("failed", analysis.UNEXPECTED)
+    assert flaky.calls == 2
+    assert "RuntimeError" in caplog.text and "database connection lost" not in caplog.text
+
+
+def test_fr05_5_an_unreadable_scan_fails_without_retrying(client, doctor_headers, patient, db):
+    case = queued_case(client, doctor_headers, patient["id"])
+    (storage.case_dicom_dir(uuid.UUID(case["id"])) / "00003.dcm").write_bytes(b"broken")
+    flaky = FlakyAnalyser(failures=0)
+    analysis.run(db, uuid.UUID(case["id"]), get_analyser=lambda: flaky, sleep=lambda s: None)
+    body = get_case(client, doctor_headers, case["id"])
+    assert body["status"] == "failed" and flaky.calls == 1
+    assert body["failure_reason"].startswith("1 of the 50 stored slices could not be read")
+
+
+def _use_model_file(monkeypatch, path):
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("MODEL_PATH", str(path))
+    get_settings.cache_clear()
+
+
+def test_no_installed_model_fails_the_case_clearly(
+    client, doctor_headers, patient, analysis_queue, monkeypatch, tmp_path
+):
+    case = queued_case(client, doctor_headers, patient["id"])
+    _use_model_file(monkeypatch, tmp_path / "missing.pth")
+    run_queued_jobs(analysis_queue)
+    body = get_case(client, doctor_headers, case["id"])
+    assert body["status"] == "failed"
+    assert body["failure_reason"].startswith("No AI model is installed")
+    assert "make fetch-model" in body["failure_reason"]
+
+
+def test_an_unreadable_model_file_fails_the_case_clearly(
+    client, doctor_headers, patient, analysis_queue, monkeypatch, tmp_path
+):
+    case = queued_case(client, doctor_headers, patient["id"])
+    broken = tmp_path / "cavinet_model.pth"
+    broken.write_bytes(b"not a model")
+    _use_model_file(monkeypatch, broken)
+    run_queued_jobs(analysis_queue)
+    body = get_case(client, doctor_headers, case["id"])
+    assert body["failure_reason"].startswith("The installed AI model file cannot be read")
+
+
+def test_worker_start_resumes_an_interrupted_analysis_once(client, doctor_headers, patient, db):
+    case_id = uuid.UUID(queued_case(client, doctor_headers, patient["id"])["id"])
+    case = db.get(Case, case_id)
+    set_status(db, case, CaseStatus.PREPROCESSING)
+    db.commit()
+    queued = []
+
+    assert analysis.recover_interrupted(db, lambda _db, c: queued.append(c.id)) == 1
+    assert queued == [case_id]
+    db.refresh(case)
+    assert case.status == "preprocessing" and case.analysis_attempts == 1
+    assert analysis.run(db, case_id) == "completed"  # the re-queued job picks it up
+
+    other = db.get(Case, uuid.UUID(queued_case(client, doctor_headers, patient["id"])["id"]))
+    set_status(db, other, CaseStatus.PREPROCESSING)
+    set_status(db, other, CaseStatus.ANALYSING)
+    other.analysis_attempts = 1  # it was already resumed once
+    db.commit()
+    assert analysis.recover_interrupted(db, lambda _db, c: queued.append(c.id)) == 1
+    db.refresh(other)
+    assert (other.status, other.failure_reason) == ("failed", analysis.GAVE_UP)
 
 
 def test_the_job_skips_cases_that_are_not_queued_or_were_deleted(
@@ -230,10 +317,12 @@ def test_fr03_4_patient_page_lists_scans_with_date_status_and_result(
     failed = upload(client, doctor_headers, patient["id"], [("scan.zip", scan_zip(10))]).json()
 
     scans = client.get(f"/api/patients/{patient['id']}", headers=doctor_headers).json()["scans"]
-    assert [(s["id"], s["status"], s["result"]) for s in scans] == [
-        (failed["id"], "failed", None),
-        (first["id"], "completed", "STUB"),
+    assert [(s["id"], s["status"]) for s in scans] == [
+        (failed["id"], "failed"),
+        (first["id"], "completed"),
     ]
+    assert scans[0]["result"] is None and scans[0]["result_is_demo"] is False
+    assert scans[1]["result"] in {"TB", "NTM"} and scans[1]["result_is_demo"] is True
     assert all(s["uploaded_at"] for s in scans)
 
 
@@ -285,6 +374,7 @@ def test_fr02_2_recent_cases_newest_first_at_most_10(
         "uploaded_at": recent[0]["uploaded_at"],
         "status": "failed",
         "result": None,
+        "result_is_demo": False,
     }
 
 

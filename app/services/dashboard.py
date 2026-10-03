@@ -24,6 +24,7 @@ def recent_cases(db: Session, limit: int = RECENT_CASES_LIMIT) -> list[RecentCas
             uploaded_at=as_utc(case.created_at),
             status=case.status,
             result=case.result_label,
+            result_is_demo=case.model_is_demo,
         )
         for case, patient in cases.recent_cases(db, limit)
     ]

@@ -15,6 +15,7 @@ from app.core.redis import close_redis
 from app.main import create_app
 from app.models import AuditLog, Base, Role, User
 from app.services import cases as cases_service
+from app.services import model_store
 from app.services.users import build_user
 from app.synthetic_dicom import SyntheticStudy, zip_files
 from app.workers.queue import get_analysis_queue
@@ -36,7 +37,8 @@ def test_env(monkeypatch, tmp_path):
     monkeypatch.setenv("SECRET_KEY", TEST_SECRET_KEY)
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("STUB_STEP_SECONDS", "0")
+    monkeypatch.setenv("ANALYSIS_RETRY_DELAY_SECONDS", "0")
+    monkeypatch.setenv("LUNGMASK_WEIGHTS", str(tmp_path / "no-lungmask-weights.pth"))
     for name in ("ADMIN_EMAIL", "ADMIN_PASSWORD", "DEMO_DOCTOR_EMAIL", "DEMO_DOCTOR_PASSWORD"):
         monkeypatch.delenv(name, raising=False)
     _clear_caches()
@@ -44,6 +46,28 @@ def test_env(monkeypatch, tmp_path):
     yield
     _clear_caches()
     clock.reset()
+
+
+@pytest.fixture(scope="session")
+def demo_bundle_path(tmp_path_factory):
+    """A small demo-style model (16³ synthetic volumes, one epoch), built once per run."""
+    import torch
+
+    from cavinet_ml.demo.build import build_demo_bundle
+
+    torch.set_num_threads(2)
+    path = tmp_path_factory.mktemp("models") / "cavinet_model.pth"
+    build_demo_bundle(path, dev_cases=10, test_cases=6, epochs=1, size=16, log=lambda m: None)
+    return path
+
+
+@pytest.fixture(autouse=True)
+def installed_model(monkeypatch, demo_bundle_path):
+    """Every test starts with the demo model installed at MODEL_PATH."""
+    monkeypatch.setenv("MODEL_PATH", str(demo_bundle_path))
+    model_store.clear_caches()
+    yield demo_bundle_path
+    model_store.clear_caches()
 
 
 @pytest.fixture(autouse=True)

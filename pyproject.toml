@@ -21,6 +21,7 @@ dependencies = [
   "pyjwt>=2.8,<3",
   "pydicom>=3.0,<4",
   "python-multipart>=0.0.18",
+  "cavinet-ml",
 ]
 
 [project.optional-dependencies]
@@ -41,7 +42,13 @@ markers = [
   "integration: needs real PostgreSQL and Redis (set TEST_DATABASE_URL and TEST_REDIS_URL)",
 ]
 addopts = "-ra"
-filterwarnings = ["error"]
+filterwarnings = [
+  "error",
+  # Third-party noise from the AI stack (MONAI, lungmask's dependencies, pickle protocol).
+  "ignore:`torch.jit.interface` is deprecated:FutureWarning",
+  "ignore::DeprecationWarning:monai.*",
+  "ignore::DeprecationWarning:pkg_resources.*",
+]
 
 [tool.coverage.run]
 source = ["app"]

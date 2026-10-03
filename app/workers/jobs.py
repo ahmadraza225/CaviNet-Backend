@@ -11,8 +11,8 @@ def ping() -> str:
 
 
 def analyse_case(case_id: str) -> str:
-    """FR-04.6 analysis job. Phase 4 runs the stub analyser; Phase 5 the AI pipeline."""
-    from app.workers import stub_analyser
+    """FR-04.6 analysis job: the AI pipeline (M-05) for one queued case."""
+    from app.workers import analysis
 
     with get_sessionmaker()() as db:
-        return stub_analyser.run(db, uuid.UUID(case_id))
+        return analysis.run(db, uuid.UUID(case_id))

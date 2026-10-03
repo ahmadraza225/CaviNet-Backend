@@ -23,6 +23,7 @@ from sqlalchemy import (
     String,
     Text,
     Uuid,
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -84,10 +85,25 @@ class Case(TimestampMixin, Base):
     manufacturer_model: Mapped[str | None] = mapped_column(String(64))
     convolution_kernel: Mapped[str | None] = mapped_column(String(64))
 
-    # Analysis result. Phase 4 stores the stub analyser's placeholder (label "STUB").
+    # Analysis result (FR-05.2, FR-06.1): "TB" or "NTM" ("STUB" for Phase 4 placeholder cases).
     result_label: Mapped[str | None] = mapped_column(String(16))
     result_is_stub: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     analyser: Mapped[str | None] = mapped_column(String(64))
+    probability_tb: Mapped[float | None] = mapped_column(Float)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    confidence_band: Mapped[str | None] = mapped_column(String(16))
+    # FR-05.4 / FR-05.6: which model produced the result, how long it took, any warnings.
+    model_name: Mapped[str | None] = mapped_column(String(120))
+    model_version: Mapped[str | None] = mapped_column(String(64))
+    model_is_demo: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
+    processing_seconds: Mapped[float | None] = mapped_column(Float)
+    warnings: Mapped[list[str] | None] = mapped_column(JSON)
+    analysis_attempts: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    # Explanation, model metrics, timings per step, previews and other details.
     result_details: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
