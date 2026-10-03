@@ -4,6 +4,8 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+MIN_SECRET_KEY_LENGTH = 32
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -18,6 +20,25 @@ class Settings(BaseSettings):
 
     analysis_queue: str = "analysis"
     health_check_timeout_seconds: float = 2.0
+
+    # Authentication (FR-01.1 to FR-01.7). SECRET_KEY signs access tokens.
+    secret_key: str = ""
+    access_token_minutes: int = 30
+    refresh_token_hours: int = 8
+    lockout_threshold: int = 5
+    lockout_minutes: int = 15
+    # Browsers only send Secure cookies over HTTPS; the laptop demo runs on plain HTTP.
+    cookie_secure: bool = False
+
+    # First admin account, created on first start if no admin exists (FR-01.7).
+    admin_email: str = ""
+    admin_password: str = ""
+    admin_full_name: str = "CaviNet Administrator"
+
+    # Demo doctor created by `make seed`.
+    demo_doctor_email: str = "doctor@cavinet.local"
+    demo_doctor_password: str = ""
+    demo_doctor_full_name: str = "Demo Doctor"
 
 
 @lru_cache

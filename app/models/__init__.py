@@ -1,17 +1,16 @@
-"""SQLAlchemy models. Tables are added from Phase 2 onwards."""
+"""SQLAlchemy models. Importing this package registers every table on Base.metadata."""
 
-from sqlalchemy import MetaData
-from sqlalchemy.orm import DeclarativeBase
+from app.models.audit_log import AuditAction, AuditLog
+from app.models.base import NAMING_CONVENTION, Base
+from app.models.refresh_token import RefreshToken
+from app.models.user import Role, User
 
-# Stable constraint names keep Alembic migrations predictable.
-NAMING_CONVENTION = {
-    "ix": "ix_%(column_0_label)s",
-    "uq": "uq_%(table_name)s_%(column_0_name)s",
-    "ck": "ck_%(table_name)s_%(constraint_name)s",
-    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
-    "pk": "pk_%(table_name)s",
-}
-
-
-class Base(DeclarativeBase):
-    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+__all__ = [
+    "NAMING_CONVENTION",
+    "AuditAction",
+    "AuditLog",
+    "Base",
+    "RefreshToken",
+    "Role",
+    "User",
+]
