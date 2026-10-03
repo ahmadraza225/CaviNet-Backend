@@ -17,7 +17,17 @@ from app.main import create_app
 from app.models import Role
 from app.services import patients as patients_service
 from app.services.users import build_user
-from tests.conftest import PASSWORD, bearer, login, set_env, token_for
+from tests.conftest import (
+    PASSWORD,
+    bearer,
+    create_patient,
+    login,
+    run_queued_jobs,
+    scan_zip,
+    set_env,
+    token_for,
+    upload,
+)
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 REDIS_URL = os.environ.get("TEST_REDIS_URL")
@@ -48,7 +58,8 @@ def live_env(monkeypatch):
 def clean_db(live_env):
     command.upgrade(alembic_config(), "head")
     with get_sessionmaker()() as session:
-        for table in ("patients", "audit_logs", "refresh_tokens", "users"):
+        tables = ("notifications", "case_events", "cases", "patients", "audit_logs")
+        for table in (*tables, "refresh_tokens", "users"):
             session.execute(text(f"DELETE FROM {table}"))
         session.commit()
 
@@ -202,3 +213,69 @@ def test_patient_flow_on_postgres(clean_db, monkeypatch, tmp_path):
 
         stats = client.get("/api/dashboard/stats", headers=headers).json()
         assert stats["total_patients"] == 2
+
+
+def test_upload_and_stub_analysis_on_postgres_and_redis(clean_db, monkeypatch, tmp_path):
+    """FR-04.1 to FR-04.6 and FR-08.1/08.2 end to end: the upload is stored on PostgreSQL,
+    the job goes through real Redis, and an RQ worker runs the stub analyser."""
+    import uuid as uuid_module
+
+    from redis import Redis
+
+    from app.services import cases as cases_service
+    from app.workers.queue import get_analysis_queue
+
+    set_env(
+        monkeypatch, DATA_DIR=str(tmp_path / "data"), ANALYSIS_QUEUE=f"it-{uuid_module.uuid4().hex}"
+    )
+    redis = Redis.from_url(REDIS_URL)
+    queue = get_analysis_queue(connection=redis)
+    monkeypatch.setattr(cases_service, "get_analysis_queue", lambda: queue)
+    with get_sessionmaker()() as session:
+        session.add(
+            build_user(
+                "dr@hospital.org", "Dr Pg", Role.DOCTOR, PASSWORD, must_change_password=False
+            )
+        )
+        session.commit()
+    try:
+        with TestClient(create_app()) as client:
+            headers = token_for(client, "dr@hospital.org")
+            patient = create_patient(client, headers)
+            response = upload(client, headers, patient["id"], [("scan.zip", scan_zip(60))])
+            assert response.status_code == 201, response.json()
+            case = response.json()
+            assert case["status"] == "queued"
+            assert queue.count == 1
+
+            run_queued_jobs(queue)
+
+            body = client.get(f"/api/cases/{case['id']}", headers=headers).json()
+            assert body["status"] == "completed"
+            assert [s["status"] for s in body["timeline"]] == [
+                "uploaded",
+                "validating",
+                "queued",
+                "preprocessing",
+                "analysing",
+                "completed",
+            ]
+            assert body["result"]["label"] == "STUB" and body["result"]["is_stub"]
+            count = client.get("/api/notifications/unread-count", headers=headers).json()
+            assert count == {"count": 1}
+            stats = client.get("/api/dashboard/stats", headers=headers).json()
+            assert (stats["scans_last_7_days"], stats["completed_cases"]) == (1, 1)
+            scans = client.get(f"/api/patients/{patient['id']}", headers=headers).json()["scans"]
+            assert [(s["status"], s["result"]) for s in scans] == [("completed", "STUB")]
+
+            # Deleting the patient cascades on PostgreSQL too.
+            deleted = client.delete(
+                f"/api/patients/{patient['id']}?confirm=MR-1001", headers=headers
+            )
+            assert deleted.status_code == 204
+            with get_engine().connect() as connection:
+                for table in ("cases", "case_events", "notifications"):
+                    assert connection.execute(text(f"SELECT count(*) FROM {table}")).scalar() == 0
+    finally:
+        queue.delete(delete_jobs=True)
+        redis.close()

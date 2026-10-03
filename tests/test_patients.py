@@ -5,14 +5,13 @@ import uuid
 from datetime import date, timedelta
 
 import pytest
-from sqlalchemy import Column, ForeignKey, MetaData, Table, Uuid, insert, select
+from sqlalchemy import select
 
 from app.core import clock
-from app.core.database import get_engine
 from app.models import AuditAction, Patient
 from app.services import patients as patients_service
 from app.services import storage
-from tests.conftest import audit_entries
+from tests.conftest import audit_entries, scan_zip, upload
 
 PATIENT = {
     "full_name": "Amina Bibi",
@@ -402,12 +401,11 @@ def test_fr03_2_delete_requires_typing_the_mr_number(client, doctor_headers, con
 def test_fr03_2_delete_is_permanent_and_removes_the_patients_files(client, doctor_headers):
     created = create_ok(client, doctor_headers)
     other = create_ok(client, doctor_headers, mr_number="MR-2")
-    folder = storage.patient_dir(uuid.UUID(created["id"]))
-    (folder / "scans" / "s1").mkdir(parents=True)
-    (folder / "scans" / "s1" / "slice-001.dcm").write_bytes(b"\0" * 16)
-    (folder / "report.pdf").write_bytes(b"%PDF")
-    other_folder = storage.patient_dir(uuid.UUID(other["id"]))
-    other_folder.mkdir(parents=True)
+    mine = upload(client, doctor_headers, created["id"], [("s.zip", scan_zip(50))]).json()
+    theirs = upload(client, doctor_headers, other["id"], [("s.zip", scan_zip(50))]).json()
+    folder = storage.case_dir(uuid.UUID(mine["id"]))
+    other_folder = storage.case_dir(uuid.UUID(theirs["id"]))
+    assert any(folder.rglob("*.dcm")) and any(other_folder.rglob("*.dcm"))
 
     response = client.delete(
         f"/api/patients/{created['id']}", params={"confirm": " mr-1001 "}, headers=doctor_headers
@@ -427,40 +425,11 @@ def test_fr03_2_delete_works_when_the_patient_has_no_files(client, doctor_header
     assert response.status_code == 204
 
 
-def test_fr03_2_delete_cascades_to_rows_that_reference_the_patient(client, doctor_headers):
-    """Phase 4 scans/cases reference patients.id ON DELETE CASCADE. A stand-in child table
-    proves the database removes them with the patient."""
-    created = create_ok(client, doctor_headers)
-    child = Table(
-        "phase4_scan_stand_in",
-        MetaData(),
-        Column("id", Uuid, primary_key=True),
-        Column(
-            "patient_id",
-            Uuid,
-            ForeignKey(Patient.__table__.c.id, ondelete="CASCADE"),
-            nullable=False,
-        ),
-    )
-    engine = get_engine()
-    child.create(engine)
-    with engine.begin() as connection:
-        connection.execute(
-            insert(child).values(id=uuid.uuid4(), patient_id=uuid.UUID(created["id"]))
-        )
-
-    response = client.delete(
-        f"/api/patients/{created['id']}", params={"confirm": "MR-1001"}, headers=doctor_headers
-    )
-    assert response.status_code == 204
-    with engine.connect() as connection:
-        assert connection.execute(select(child)).all() == []
-
-
 def test_fr03_2_file_cleanup_failure_does_not_undo_the_delete(
     client, doctor_headers, monkeypatch, caplog
 ):
     created = create_ok(client, doctor_headers)
+    upload(client, doctor_headers, created["id"], [("s.zip", scan_zip(50))])
     monkeypatch.setattr(storage, "remove_paths", lambda paths: list(paths))
     response = client.delete(
         f"/api/patients/{created['id']}", params={"confirm": "MR-1001"}, headers=doctor_headers

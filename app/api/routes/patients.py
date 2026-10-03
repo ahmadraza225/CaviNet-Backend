@@ -7,13 +7,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.api.deps import DbSession, DoctorUser, require_doctor
+from app.core.clock import as_utc
 from app.schemas.patients import (
     PatientCreate,
     PatientDetail,
     PatientOut,
     PatientPage,
     PatientUpdate,
+    ScanSummary,
 )
+from app.services import cases as cases_service
 from app.services import patients as patients_service
 from app.services.patients import PAGE_SIZE, PatientSort, SortOrder
 
@@ -47,8 +50,16 @@ def create_patient(body: PatientCreate, doctor: DoctorUser, db: DbSession) -> Pa
 @router.get("/{patient_id}", response_model=PatientDetail)
 def get_patient(patient_id: uuid.UUID, _: DoctorUser, db: DbSession) -> PatientDetail:
     patient = patients_service.get_or_404(db, patient_id)
-    # FR-03.4: the scan history is filled from Phase 4.
-    return PatientDetail.from_patient(patient, scans=[])
+    scans = [
+        ScanSummary(
+            id=case.id,
+            uploaded_at=as_utc(case.created_at),
+            status=case.status,
+            result=case.result_label,
+        )
+        for case in cases_service.cases_for_patient(db, patient)
+    ]
+    return PatientDetail.from_patient(patient, scans=scans)
 
 
 @router.patch("/{patient_id}", response_model=PatientOut)

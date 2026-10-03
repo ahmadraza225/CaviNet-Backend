@@ -122,7 +122,7 @@ def age_on(date_of_birth: date, today: date) -> int:
 
 
 class ScanSummary(BaseModel):
-    """One scan in a patient's history (FR-03.4). Filled from Phase 4."""
+    """One scan (case) in a patient's history (FR-03.4)."""
 
     id: uuid.UUID
     uploaded_at: datetime

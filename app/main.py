@@ -9,13 +9,14 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import __version__
-from app.api.routes import admin, auth, dashboard, health, patients
+from app.api.routes import admin, auth, cases, dashboard, health, notifications, patients
 from app.core.config import get_settings
 from app.core.database import dispose_engine, get_sessionmaker
 from app.core.logging import install_log_filters
 from app.core.redis import close_redis
 from app.core.request_context import RequestContextMiddleware
 from app.core.security import ensure_secret_key
+from app.services.cases import recover_interrupted_uploads
 from app.services.errors import ServiceError
 from app.services.users import ensure_initial_admin
 
@@ -35,10 +36,21 @@ def _bootstrap_admin() -> None:
         logger.exception("Could not check or create the initial admin account")
 
 
+def _recover_uploads() -> None:
+    try:
+        with get_sessionmaker()() as db:
+            recovered = recover_interrupted_uploads(db)
+        if recovered:
+            logger.warning("Marked %d interrupted upload(s) as failed", recovered)
+    except SQLAlchemyError:
+        logger.exception("Could not check for interrupted uploads")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     ensure_secret_key()
     _bootstrap_admin()
+    _recover_uploads()
     yield
     dispose_engine()
     close_redis()
@@ -71,6 +83,8 @@ def create_app() -> FastAPI:
     app.include_router(admin.router, prefix="/api")
     app.include_router(patients.router, prefix="/api")
     app.include_router(dashboard.router, prefix="/api")
+    app.include_router(cases.router, prefix="/api")
+    app.include_router(notifications.router, prefix="/api")
     return app
 
 
