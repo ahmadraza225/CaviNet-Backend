@@ -62,6 +62,15 @@ def test_role_matrix_for_admin_endpoints_matches_section_9_3():
     assert all(roles == {Role.ADMIN} for _, _, roles, _ in admin_endpoints)
 
 
+def test_role_matrix_for_patient_and_dashboard_endpoints_matches_section_9_3():
+    """Admins deliberately have no access to patient data."""
+    doctor_endpoints = [
+        e for e in PROTECTED if e[1].startswith(("/api/patients", "/api/dashboard"))
+    ]
+    assert len(doctor_endpoints) == 7
+    assert all(roles == {Role.DOCTOR} for _, _, roles, _ in doctor_endpoints)
+
+
 @pytest.mark.parametrize(
     ("method", "path", "roles", "allows_pending"),
     PROTECTED,

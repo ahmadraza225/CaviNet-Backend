@@ -23,8 +23,10 @@ class AuditAction(enum.StrEnum):
     USER_DEACTIVATED = "user_deactivated"
     USER_REACTIVATED = "user_reactivated"
     PASSWORD_RESET = "password_reset"
-    # Later phases add: patient_created/updated/deleted, scan_uploaded, result_viewed,
-    # report_downloaded.
+    PATIENT_CREATED = "patient_created"
+    PATIENT_UPDATED = "patient_updated"
+    PATIENT_DELETED = "patient_deleted"
+    # Later phases add: scan_uploaded, result_viewed, report_downloaded.
 
 
 class AuditLog(Base):

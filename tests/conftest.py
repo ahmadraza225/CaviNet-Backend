@@ -26,9 +26,11 @@ def _clear_caches() -> None:
 
 @pytest.fixture(autouse=True)
 def test_env(monkeypatch, tmp_path):
-    """Each test gets its own SQLite database, a test SECRET_KEY and a real-time clock."""
+    """Each test gets its own SQLite database and data directory, a test SECRET_KEY and a
+    real-time clock."""
     monkeypatch.setenv("SECRET_KEY", TEST_SECRET_KEY)
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     for name in ("ADMIN_EMAIL", "ADMIN_PASSWORD", "DEMO_DOCTOR_EMAIL", "DEMO_DOCTOR_PASSWORD"):
         monkeypatch.delenv(name, raising=False)
     _clear_caches()

@@ -12,9 +12,12 @@ from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from app.core.database import get_sessionmaker
+from app.core.database import get_engine, get_sessionmaker
 from app.main import create_app
-from tests.conftest import bearer, login, set_env
+from app.models import Role
+from app.services import patients as patients_service
+from app.services.users import build_user
+from tests.conftest import PASSWORD, bearer, login, set_env, token_for
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 REDIS_URL = os.environ.get("TEST_REDIS_URL")
@@ -45,7 +48,7 @@ def live_env(monkeypatch):
 def clean_db(live_env):
     command.upgrade(alembic_config(), "head")
     with get_sessionmaker()() as session:
-        for table in ("audit_logs", "refresh_tokens", "users"):
+        for table in ("patients", "audit_logs", "refresh_tokens", "users"):
             session.execute(text(f"DELETE FROM {table}"))
         session.commit()
 
@@ -121,3 +124,81 @@ def test_account_flow_on_postgres(clean_db, monkeypatch):
             "password_reset",
             "logout",
         } <= actions
+
+
+def test_patient_flow_on_postgres(clean_db, monkeypatch, tmp_path):
+    """FR-03.1 to FR-03.3 and the delete cascade on the production database engine."""
+    set_env(monkeypatch, DATA_DIR=str(tmp_path / "data"))
+    with get_sessionmaker()() as session:
+        session.add(
+            build_user(
+                "dr@hospital.org", "Dr Pg", Role.DOCTOR, PASSWORD, must_change_password=False
+            )
+        )
+        session.commit()
+    with TestClient(create_app()) as client:
+        headers = token_for(client, "dr@hospital.org")
+        people = [("zainab Ali", "B-2"), ("Ahmed Raza", "C-3"), ("Maryam Noor", "A-1")]
+        ids = {}
+        for name, mr in people:
+            response = client.post(
+                "/api/patients",
+                json={
+                    "full_name": name,
+                    "mr_number": mr.lower(),
+                    "date_of_birth": "1980-05-05",
+                    "sex": "female",
+                },
+                headers=headers,
+            )
+            assert response.status_code == 201, response.json()
+            ids[mr] = response.json()["id"]
+
+        def names(**params):
+            body = client.get("/api/patients", params=params, headers=headers).json()
+            return [item["full_name"] for item in body["items"]]
+
+        assert names(sort="full_name", order="asc") == ["Ahmed Raza", "Maryam Noor", "zainab Ali"]
+        assert names(q="ZAINAB") == ["zainab Ali"]
+        assert names(q="c-3") == ["Ahmed Raza"]
+        assert names(q="%") == []
+
+        duplicate = {
+            "full_name": "X Y",
+            "mr_number": "a-1",
+            "date_of_birth": "1980-05-05",
+            "sex": "male",
+        }
+        response = client.post("/api/patients", json=duplicate, headers=headers)
+        assert response.status_code == 409
+        # Simultaneous requests: the unique index on PostgreSQL has the final say.
+        monkeypatch.setattr(patients_service, "_mr_number_in_use", lambda *a, **k: False)
+        response = client.post("/api/patients", json=duplicate, headers=headers)
+        assert response.status_code == 409 and response.json()["code"] == "mr_number_taken"
+
+        engine = get_engine()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE phase4_scan_stand_in (id serial PRIMARY KEY, "
+                    "patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE)"
+                )
+            )
+            connection.execute(
+                text("INSERT INTO phase4_scan_stand_in (patient_id) VALUES (:p)"),
+                {"p": ids["A-1"]},
+            )
+        try:
+            response = client.delete(
+                f"/api/patients/{ids['A-1']}", params={"confirm": "A-1"}, headers=headers
+            )
+            assert response.status_code == 204
+            with engine.connect() as connection:
+                remaining = connection.execute(text("SELECT count(*) FROM phase4_scan_stand_in"))
+                assert remaining.scalar() == 0
+        finally:
+            with engine.begin() as connection:
+                connection.execute(text("DROP TABLE phase4_scan_stand_in"))
+
+        stats = client.get("/api/dashboard/stats", headers=headers).json()
+        assert stats["total_patients"] == 2

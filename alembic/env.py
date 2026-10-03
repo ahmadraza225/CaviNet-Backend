@@ -11,7 +11,8 @@ from app.models import Base
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Keep loggers created before migrations run (the app's, when tests run migrations).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # An explicitly passed URL (e.g. tests) wins over the application setting.
 if not config.get_main_option("sqlalchemy.url"):
