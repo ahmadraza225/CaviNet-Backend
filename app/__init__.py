@@ -1,3 +1,3 @@
 """CaviNet backend: REST API and background worker."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
