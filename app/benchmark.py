@@ -17,6 +17,7 @@ from pathlib import Path
 
 from app.services import model_store
 from app.synthetic_dicom import SyntheticStudy
+from cavinet_ml import hide_library_notices
 
 BUDGET_SECONDS = 180
 
@@ -57,6 +58,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--slices", type=int, default=300)
     parser.add_argument("--size", type=int, default=512)
     args = parser.parse_args(argv)
+    hide_library_notices()
     print(json.dumps(run(args.slices, args.size), indent=2))
 
 

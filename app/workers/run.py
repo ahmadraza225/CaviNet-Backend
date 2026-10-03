@@ -14,12 +14,14 @@ from app.core.redis import get_redis
 from app.services import model_store
 from app.services.cases import enqueue_analysis
 from app.workers.analysis import recover_interrupted
+from cavinet_ml import hide_library_notices
 
 logger = logging.getLogger(__name__)
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    hide_library_notices()
     settings = get_settings()
     model_store.configure_threads()
     with get_sessionmaker()() as db:
