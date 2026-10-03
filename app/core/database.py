@@ -4,7 +4,7 @@ import logging
 from collections.abc import Iterator
 from functools import lru_cache
 
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
@@ -18,7 +18,18 @@ def get_engine() -> Engine:
     connect_args = {}
     if settings.database_url.startswith("postgresql"):
         connect_args["connect_timeout"] = max(1, int(settings.health_check_timeout_seconds))
-    return create_engine(settings.database_url, pool_pre_ping=True, connect_args=connect_args)
+    engine = create_engine(settings.database_url, pool_pre_ping=True, connect_args=connect_args)
+    if engine.dialect.name == "sqlite":
+        # SQLite (used by the unit tests) only enforces foreign keys, and therefore
+        # ON DELETE CASCADE, when asked to on every connection.
+        event.listen(engine, "connect", _enable_sqlite_foreign_keys)
+    return engine
+
+
+def _enable_sqlite_foreign_keys(dbapi_connection, _record) -> None:
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
 
 
 @lru_cache

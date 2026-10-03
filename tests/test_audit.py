@@ -8,9 +8,23 @@ from app.models import AuditAction
 from tests.conftest import PASSWORD, audit_entries, bearer, login, token_for
 
 
-def test_fr09_2_every_audit_action_so_far_is_recorded(client, admin, db):
-    """Runs every logged account action once and checks each produced an audit entry."""
+def test_fr09_2_every_audit_action_so_far_is_recorded(client, admin, doctor, db):
+    """Runs every logged action once and checks each produced an audit entry."""
     admin_headers = token_for(client, admin.email)
+    doctor_headers = token_for(client, doctor.email)
+    patient = client.post(
+        "/api/patients",
+        json={
+            "full_name": "Test Patient",
+            "mr_number": "MR-1",
+            "date_of_birth": "1980-01-01",
+            "sex": "female",
+        },
+        headers=doctor_headers,
+    ).json()
+    patient_url = f"/api/patients/{patient['id']}"
+    client.patch(patient_url, json={"phone": "0300 1234567"}, headers=doctor_headers)
+    client.delete(f"{patient_url}?confirm=MR-1", headers=doctor_headers)
     login(client, "nobody@example.org", "Wrong-passw0rd")  # login_failure
     created = client.post(
         "/api/admin/users",

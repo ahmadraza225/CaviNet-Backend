@@ -9,9 +9,10 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import __version__
-from app.api.routes import admin, auth, health
+from app.api.routes import admin, auth, dashboard, health, patients
 from app.core.config import get_settings
 from app.core.database import dispose_engine, get_sessionmaker
+from app.core.logging import install_log_filters
 from app.core.redis import close_redis
 from app.core.request_context import RequestContextMiddleware
 from app.core.security import ensure_secret_key
@@ -53,6 +54,7 @@ async def _service_error_handler(_: Request, error: Exception) -> JSONResponse:
 
 
 def create_app() -> FastAPI:
+    install_log_filters()
     app = FastAPI(
         title="CaviNet API",
         version=__version__,
@@ -67,6 +69,8 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
     app.include_router(admin.router, prefix="/api")
+    app.include_router(patients.router, prefix="/api")
+    app.include_router(dashboard.router, prefix="/api")
     return app
 
 
