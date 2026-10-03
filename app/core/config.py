@@ -21,8 +21,11 @@ class Settings(BaseSettings):
     analysis_queue: str = "analysis"
     # FR-04.1: largest accepted upload (1.5 GB). nginx allows a little more for form overhead.
     max_upload_bytes: int = 1536 * 1024 * 1024
-    # Pause between the stub analyser's steps, so the timeline can be watched (Phase 4 only).
-    stub_step_seconds: float = 2.0
+    # AI model (section 11.6) and the lungmask weights baked into the image (section 11.1).
+    model_path: str = "/models/cavinet_model.pth"
+    lungmask_weights: str = "/opt/lungmask/unet_r231-d5d2fc3d.pth"
+    # FR-05.5: pause before the one retry after an unexpected (possibly transient) error.
+    analysis_retry_delay_seconds: float = 5.0
     health_check_timeout_seconds: float = 2.0
 
     # Authentication (FR-01.1 to FR-01.7). SECRET_KEY signs access tokens.

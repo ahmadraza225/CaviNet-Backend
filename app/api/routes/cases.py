@@ -2,16 +2,17 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Path, Request, status
+from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import DbSession, DoctorUser, require_doctor
 from app.core.config import get_settings
-from app.models import Case, Patient, User
-from app.schemas.cases import CaseOut
+from app.models import AuditAction, Case, Patient, User
+from app.schemas.cases import CaseOut, ResultOut
+from app.services import audit, results, storage, uploads
 from app.services import cases as cases_service
 from app.services import patients as patients_service
-from app.services import storage, uploads
 from app.services.uploads import StagedUpload
 
 router = APIRouter(tags=["cases"], dependencies=[Depends(require_doctor)])
@@ -55,3 +56,32 @@ async def upload_scan(
 def get_case(case_id: uuid.UUID, _: DoctorUser, db: DbSession) -> CaseOut:
     """The case with its status timeline (FR-08.1), scan details and result."""
     return case_out(db, cases_service.get_or_404(db, case_id))
+
+
+@router.get("/cases/{case_id}/result", response_model=ResultOut)
+def get_result(case_id: uuid.UUID, doctor: DoctorUser, db: DbSession) -> ResultOut:
+    """FR-06.1 to FR-06.3: class, probability, confidence, band, explanation, validated
+    performance, disclaimer and the DEMO banner (FR-05.6). Viewing is audited (FR-09.2)."""
+    case = cases_service.get_or_404(db, case_id)
+    result = results.result_for(case, db.get(Patient, case.patient_id))
+    audit.record(
+        db, AuditAction.RESULT_VIEWED, actor=doctor, target_type="case", target_id=str(case.id)
+    )
+    db.commit()
+    return result
+
+
+@router.get("/cases/{case_id}/previews/{index}", response_class=FileResponse)
+def get_preview(
+    case_id: uuid.UUID,
+    _: DoctorUser,
+    db: DbSession,
+    index: int = Path(ge=0, le=999),
+) -> FileResponse:
+    """FR-06.4: one of the 48 lung-window slices (PNG), 0 = nearest the head."""
+    case = cases_service.get_or_404(db, case_id)
+    return FileResponse(
+        results.preview_path(case, index),
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )

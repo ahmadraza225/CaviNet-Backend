@@ -5,7 +5,7 @@
 
 The API handles Uploaded → Validating → Queued (or Failed) while the upload request is open:
 the files are checked and de-identified before anything is stored (FR-04.2, FR-04.4). The
-worker takes the case from Queued to the end (FR-04.6; a stub analyser in Phase 4).
+worker takes the case from Queued to the end with the AI pipeline (FR-04.6, M-05).
 """
 
 import logging
@@ -74,6 +74,11 @@ def set_status(db: Session, case: Case, status: CaseStatus, message: str | None 
     if status in FINAL_STATUSES:
         case.completed_at = utcnow()
         notifications.notify_case_finished(db, case)
+
+
+def note(db: Session, case: Case, message: str) -> None:
+    """A timeline entry that does not change the status (e.g. a retry). The caller commits."""
+    db.add(CaseEvent(case_id=case.id, status=case.status, message=message))
 
 
 def fail(db: Session, case: Case, reason: str) -> None:

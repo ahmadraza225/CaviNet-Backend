@@ -70,7 +70,7 @@ def test_role_matrix_for_doctor_endpoints_matches_section_9_3():
         for e in PROTECTED
         if e[1].startswith(("/api/patients", "/api/dashboard", "/api/cases", "/api/notifications"))
     ]
-    assert len(doctor_endpoints) == 13
+    assert len(doctor_endpoints) == 15
     assert all(roles == {Role.DOCTOR} for _, _, roles, _ in doctor_endpoints)
 
 

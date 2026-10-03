@@ -9,10 +9,12 @@ from fastapi import APIRouter, Depends, Query, status
 from app.api.deps import AdminUser, DbSession, require_admin
 from app.models import AuditAction
 from app.schemas.audit import AuditLogOut, AuditLogPage
+from app.schemas.model_info import ModelInfo
 from app.schemas.users import PasswordReset, UserCreate, UserOut, UserUpdate
 from app.services import audit as audit_service
+from app.services import model_store
 from app.services import users as users_service
-from app.services.errors import InvalidInput
+from app.services.errors import InvalidInput, NotFound
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -95,3 +97,24 @@ def list_audit_logs(
 @router.get("/audit-logs/actions", response_model=list[str])
 def list_audit_actions(_: AdminUser) -> list[str]:
     return [action.value for action in AuditAction]
+
+
+@router.get("/model", response_model=ModelInfo)
+def get_model_info(_: AdminUser) -> ModelInfo:
+    """FR-09.4: version, training date, demo or real, validated metrics and the rest of the
+    model card (everything in the bundle except the weights)."""
+    info = model_store.model_info()
+    if info is None:
+        raise NotFound(
+            "No AI model is installed. Run 'make fetch-model' and restart CaviNet.",
+            code="no_model",
+        )
+    return ModelInfo(
+        **{
+            key: info.get(key)
+            for key in ModelInfo.model_fields
+            if key not in ("label_map", "demo_banner")
+        },
+        label_map={str(k): v for k, v in info["label_map"].items()},
+        demo_banner=model_store.DEMO_BANNER if info["is_demo"] else None,
+    )

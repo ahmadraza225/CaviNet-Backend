@@ -215,9 +215,9 @@ def test_patient_flow_on_postgres(clean_db, monkeypatch, tmp_path):
         assert stats["total_patients"] == 2
 
 
-def test_upload_and_stub_analysis_on_postgres_and_redis(clean_db, monkeypatch, tmp_path):
-    """FR-04.1 to FR-04.6 and FR-08.1/08.2 end to end: the upload is stored on PostgreSQL,
-    the job goes through real Redis, and an RQ worker runs the stub analyser."""
+def test_upload_and_analysis_on_postgres_and_redis(clean_db, monkeypatch, tmp_path):
+    """Phase 5 acceptance: synthetic scan → upload (PostgreSQL) → job via real Redis → RQ
+    worker runs the AI pipeline → stored result with the demo flag."""
     import uuid as uuid_module
 
     from redis import Redis
@@ -260,13 +260,16 @@ def test_upload_and_stub_analysis_on_postgres_and_redis(clean_db, monkeypatch, t
                 "analysing",
                 "completed",
             ]
-            assert body["result"]["label"] == "STUB" and body["result"]["is_stub"]
+            assert body["result"]["label"] in {"TB", "NTM"} and body["result"]["is_demo"]
+            result = client.get(f"/api/cases/{case['id']}/result", headers=headers).json()
+            assert result["demo_banner"] == "DEMO MODEL: NOT FOR CLINICAL USE"
+            assert result["preview_count"] == 48
             count = client.get("/api/notifications/unread-count", headers=headers).json()
             assert count == {"count": 1}
             stats = client.get("/api/dashboard/stats", headers=headers).json()
             assert (stats["scans_last_7_days"], stats["completed_cases"]) == (1, 1)
             scans = client.get(f"/api/patients/{patient['id']}", headers=headers).json()["scans"]
-            assert [(s["status"], s["result"]) for s in scans] == [("completed", "STUB")]
+            assert [s["status"] for s in scans] == ["completed"] and scans[0]["result_is_demo"]
 
             # Deleting the patient cascades on PostgreSQL too.
             deleted = client.delete(

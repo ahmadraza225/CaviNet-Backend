@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import __version__
-from app.api.routes import admin, auth, cases, dashboard, health, notifications, patients
+from app.api.routes import admin, auth, cases, dashboard, health, model, notifications, patients
 from app.core.config import get_settings
 from app.core.database import dispose_engine, get_sessionmaker
 from app.core.logging import install_log_filters
@@ -85,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard.router, prefix="/api")
     app.include_router(cases.router, prefix="/api")
     app.include_router(notifications.router, prefix="/api")
+    app.include_router(model.router, prefix="/api")
     return app
 
 

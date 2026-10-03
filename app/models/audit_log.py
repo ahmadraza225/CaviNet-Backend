@@ -27,7 +27,8 @@ class AuditAction(enum.StrEnum):
     PATIENT_UPDATED = "patient_updated"
     PATIENT_DELETED = "patient_deleted"
     SCAN_UPLOADED = "scan_uploaded"
-    # Later phases add: result_viewed, report_downloaded.
+    RESULT_VIEWED = "result_viewed"
+    # Phase 7 adds: report_downloaded.
 
 
 class AuditLog(Base):
