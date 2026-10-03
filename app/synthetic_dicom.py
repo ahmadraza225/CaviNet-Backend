@@ -46,8 +46,9 @@ PRIVATE_VALUE = "SYN-PRIVATE-SECRET"
 Customize = Callable[[int, Dataset], None]
 
 
-def _pixels(rows: int, columns: int) -> bytes:
-    """A crude chest: air outside, soft tissue body, two darker lungs (HU + 1024)."""
+def _pixels(rows: int, columns: int, lung_scale: float = 1.0) -> bytes:
+    """A crude chest: air outside, soft-tissue body, two darker lungs (HU + 1024).
+    `lung_scale` shrinks the lungs towards the top and bottom of the chest."""
     values = array("h")
     for r in range(rows):
         y = (r + 0.5) / rows * 2 - 1
@@ -56,10 +57,22 @@ def _pixels(rows: int, columns: int) -> bytes:
             hu = -1000
             if (x / 0.9) ** 2 + (y / 0.7) ** 2 <= 1:
                 hu = 40
-                if ((abs(x) - 0.4) / 0.25) ** 2 + (y / 0.45) ** 2 <= 1:
+                if (
+                    lung_scale > 0
+                    and ((abs(x) - 0.4) / (0.25 * lung_scale)) ** 2 + (y / (0.45 * lung_scale)) ** 2
+                    <= 1
+                ):
                     hu = -850
             values.append(hu + 1024)  # stored value; RescaleIntercept -1024 gives HU
     return values.tobytes()
+
+
+def lung_scale(index: int, slices: int) -> float:
+    """Lung size along the series: largest mid-chest, small at both ends (in 0.1 steps)."""
+    if slices < 2:
+        return 1.0
+    t = index / (slices - 1) * 2 - 1
+    return round(max(0.2, (1 - t * t) ** 0.5), 1)
 
 
 class SyntheticStudy:
@@ -69,7 +82,7 @@ class SyntheticStudy:
         self.seed = seed
         self.study_uid = generate_uid(entropy_srcs=[seed, "study"])
         self.frame_uid = generate_uid(entropy_srcs=[seed, "frame"])
-        self._pixel_cache: dict[tuple[int, int], bytes] = {}
+        self._pixel_cache: dict[tuple[int, int, float], bytes] = {}
 
     def series(
         self,
@@ -98,6 +111,7 @@ class SyntheticStudy:
                 spacing_mm=spacing_mm,
                 thickness_mm=spacing_mm if thickness_mm is None else thickness_mm,
                 orientation=orientation,
+                scale=lung_scale(index, slices),
             )
             if customize:
                 customize(index, ds)
@@ -116,6 +130,7 @@ class SyntheticStudy:
         spacing_mm: float,
         thickness_mm: float,
         orientation: tuple[float, ...],
+        scale: float = 1.0,
     ) -> Dataset:
         sop_uid = generate_uid(entropy_srcs=[series_uid, str(index)])
         meta = FileMetaDataset()
@@ -165,9 +180,9 @@ class SyntheticStudy:
         ds.PixelRepresentation = 1
         ds.RescaleIntercept = "-1024"
         ds.RescaleSlope = "1"
-        key = (rows, columns)
+        key = (rows, columns, scale)
         if key not in self._pixel_cache:
-            self._pixel_cache[key] = _pixels(rows, columns)
+            self._pixel_cache[key] = _pixels(rows, columns, scale)
         ds.PixelData = self._pixel_cache[key]
         block = ds.private_block(0x0029, PRIVATE_CREATOR, create=True)
         block.add_new(0x10, "LO", PRIVATE_VALUE)
