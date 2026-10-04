@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cavinet-backend"
-version = "0.5.0"
+version = "0.6.0"
 description = "CaviNet REST API and background worker"
 requires-python = ">=3.11"
 dependencies = [
