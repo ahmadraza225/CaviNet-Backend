@@ -16,7 +16,7 @@ WORKDIR /app
 # x86-64 bundles several GB of GPU libraries; the CPU index has small wheels for x86-64 and
 # ARM (Apple Silicon Macs). Override only if that index is unreachable.
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
-RUN pip install --index-url "${TORCH_INDEX_URL}" "torch>=2.3,<3"
+RUN pip install --index-url "${TORCH_INDEX_URL}" "torch>=2.8,<3"
 
 # lungmask R231 weights, baked in at build time (section 11.1): no download at runtime.
 ENV LUNGMASK_WEIGHTS=/opt/lungmask/unet_r231-d5d2fc3d.pth

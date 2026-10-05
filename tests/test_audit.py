@@ -17,8 +17,9 @@ from tests.conftest import (
 )
 
 
-def test_fr09_2_every_audit_action_so_far_is_recorded(client, admin, doctor, db, analysis_queue):
-    """Runs every logged action once and checks each produced an audit entry."""
+def test_fr09_2_every_audit_action_is_recorded(client, admin, doctor, db, analysis_queue):
+    """Runs every logged action once and checks each produced an audit entry: everything
+    FR-09.2 lists, from sign-in to the report download (FR-07.3)."""
     admin_headers = token_for(client, admin.email)
     doctor_headers = token_for(client, doctor.email)
     patient = client.post(
@@ -36,6 +37,7 @@ def test_fr09_2_every_audit_action_so_far_is_recorded(client, admin, doctor, db,
     case = upload(client, doctor_headers, patient["id"], [("scan.zip", scan_zip(50))]).json()
     run_queued_jobs(analysis_queue)
     client.get(f"/api/cases/{case['id']}/result", headers=doctor_headers)  # result_viewed
+    client.get(f"/api/cases/{case['id']}/report", headers=doctor_headers)  # report_downloaded
     client.delete(f"{patient_url}?confirm=MR-1", headers=doctor_headers)
     login(client, "nobody@example.org", "Wrong-passw0rd")  # login_failure
     created = client.post(

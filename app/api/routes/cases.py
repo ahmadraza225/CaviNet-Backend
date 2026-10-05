@@ -1,8 +1,9 @@
 """CT upload and cases (M-04, M-08). Doctor role only (section 9.3)."""
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Request, status
+from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -10,7 +11,7 @@ from app.api.deps import DbSession, DoctorUser, require_doctor
 from app.core.config import get_settings
 from app.models import AuditAction, Case, Patient, User
 from app.schemas.cases import CaseOut, ResultOut
-from app.services import audit, results, storage, uploads
+from app.services import audit, report, results, storage, uploads
 from app.services import cases as cases_service
 from app.services import patients as patients_service
 from app.services.uploads import StagedUpload
@@ -69,6 +70,42 @@ def get_result(case_id: uuid.UUID, doctor: DoctorUser, db: DbSession) -> ResultO
     )
     db.commit()
     return result
+
+
+@router.get(
+    "/cases/{case_id}/report",
+    response_class=Response,
+    responses={200: {"content": {"application/pdf": {}}, "description": "The PDF report."}},
+)
+def download_report(
+    case_id: uuid.UUID,
+    doctor: DoctorUser,
+    db: DbSession,
+    tz: Annotated[
+        str | None,
+        Query(max_length=64, description="IANA time zone for the report date, e.g. Asia/Karachi"),
+    ] = None,
+) -> Response:
+    """FR-07.1, FR-07.2: the diagnostic PDF report of a completed case. It is generated on
+    each download and never stored (NFR-3). Downloads are audited (FR-07.3)."""
+    case = cases_service.get_or_404(db, case_id)
+    patient = db.get(Patient, case.patient_id)
+    result = results.result_for(case, patient)
+    pdf, filename = report.report_for(
+        case, patient, result, doctor.full_name, report.timezone_or_utc(tz)
+    )
+    audit.record(
+        db, AuditAction.REPORT_DOWNLOADED, actor=doctor, target_type="case", target_id=str(case.id)
+    )
+    db.commit()
+    return Response(
+        pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get("/cases/{case_id}/previews/{index}", response_class=FileResponse)

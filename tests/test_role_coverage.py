@@ -56,22 +56,78 @@ def test_fr01_3_every_endpoint_is_public_by_design_or_role_checked():
     assert {p for _, p, _, _ in ENDPOINTS} >= PUBLIC_PATHS, "PUBLIC_PATHS lists a missing route"
 
 
-def test_role_matrix_for_admin_endpoints_matches_section_9_3():
-    admin_endpoints = [e for e in PROTECTED if e[1].startswith("/api/admin/")]
-    assert admin_endpoints, "expected admin endpoints"
-    assert all(roles == {Role.ADMIN} for _, _, roles, _ in admin_endpoints)
+DOCTOR, ADMIN = frozenset({Role.DOCTOR}), frozenset({Role.ADMIN})
+BOTH = DOCTOR | ADMIN
+
+# Section 9.3, endpoint by endpoint. Admins deliberately have no access to patient data;
+# doctors have no access to user management, the audit log or the admin model page.
+ROLE_MATRIX = {
+    # Log in, change own password: both roles.
+    "GET /api/auth/me": BOTH,
+    "POST /api/auth/change-password": BOTH,
+    # Create / deactivate users, assign roles, reset passwords: admin.
+    "GET /api/admin/users": ADMIN,
+    "POST /api/admin/users": ADMIN,
+    "PATCH /api/admin/users/{user_id}": ADMIN,
+    "POST /api/admin/users/{user_id}/deactivate": ADMIN,
+    "POST /api/admin/users/{user_id}/reactivate": ADMIN,
+    "POST /api/admin/users/{user_id}/reset-password": ADMIN,
+    # View audit log and model information: admin.
+    "GET /api/admin/audit-logs": ADMIN,
+    "GET /api/admin/audit-logs/actions": ADMIN,
+    "GET /api/admin/model": ADMIN,
+    # Create / view / edit / delete patients: doctor.
+    "GET /api/patients": DOCTOR,
+    "POST /api/patients": DOCTOR,
+    "GET /api/patients/{patient_id}": DOCTOR,
+    "PATCH /api/patients/{patient_id}": DOCTOR,
+    "DELETE /api/patients/{patient_id}": DOCTOR,
+    "GET /api/dashboard/stats": DOCTOR,
+    "GET /api/dashboard/recent-cases": DOCTOR,
+    # Upload CT scans, view results, download reports: doctor.
+    "POST /api/patients/{patient_id}/cases": DOCTOR,
+    "GET /api/cases/{case_id}": DOCTOR,
+    "GET /api/cases/{case_id}/result": DOCTOR,
+    "GET /api/cases/{case_id}/report": DOCTOR,
+    "GET /api/cases/{case_id}/previews/{index}": DOCTOR,
+    # Receive case notifications: doctor.
+    "GET /api/notifications": DOCTOR,
+    "GET /api/notifications/unread-count": DOCTOR,
+    "POST /api/notifications/read-all": DOCTOR,
+    "POST /api/notifications/{notification_id}/read": DOCTOR,
+    # Whether a model is installed and the DEMO banner (FR-05.6): shown to everyone.
+    "GET /api/model/status": BOTH,
+}
 
 
-def test_role_matrix_for_doctor_endpoints_matches_section_9_3():
-    """Patients, uploads, cases, dashboard and notifications are for doctors only: admins
-    deliberately have no access to patient data."""
-    doctor_endpoints = [
-        e
-        for e in PROTECTED
-        if e[1].startswith(("/api/patients", "/api/dashboard", "/api/cases", "/api/notifications"))
-    ]
-    assert len(doctor_endpoints) == 15
-    assert all(roles == {Role.DOCTOR} for _, _, roles, _ in doctor_endpoints)
+def test_fr01_3_role_matrix_matches_section_9_3():
+    """Every protected endpoint, and the roles allowed to call it, exactly as section 9.3."""
+    discovered = {f"{m} {p}": roles for m, p, roles, _ in PROTECTED}
+    assert discovered.keys() == ROLE_MATRIX.keys(), (
+        "Endpoints added or removed: add each new endpoint to ROLE_MATRIX with its roles. "
+        f"Unlisted: {sorted(discovered.keys() - ROLE_MATRIX.keys())}; "
+        f"missing: {sorted(ROLE_MATRIX.keys() - discovered.keys())}"
+    )
+    wrong = {key: roles for key, roles in discovered.items() if roles != ROLE_MATRIX[key]}
+    assert wrong == {}, f"Roles differ from section 9.3: {wrong}"
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "roles", "allows_pending"),
+    PROTECTED,
+    ids=[f"{m} {p}" for m, p, _, _ in PROTECTED],
+)
+def test_fr01_3_allowed_roles_pass_the_role_check(
+    client, make_user, method, path, roles, allows_pending
+):
+    """The other half of the matrix: each allowed role gets past the role check (the
+    request may still fail for other reasons, e.g. 404 for the made-up record id)."""
+    for role in roles:
+        user = make_user(f"ok-{role}-{uuid.uuid4().hex[:6]}@example.org", role)
+        response = client.request(
+            method, _url(path), json={}, headers=token_for(client, user.email)
+        )
+        assert response.status_code not in (401, 403), (role, response.json())
 
 
 @pytest.mark.parametrize(

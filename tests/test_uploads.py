@@ -266,6 +266,41 @@ def test_fr04_1_the_limit_is_1_5_gb_and_checked_before_reading(client, doctor_he
     assert response.json()["detail"].startswith("The upload is larger than the 1.5 GB limit.")
 
 
+def test_fr04_1_a_streamed_upload_without_a_declared_size_is_cut_off_at_the_limit(
+    client, doctor_headers, patient, monkeypatch, db
+):
+    """Chunked transfer has no Content-Length: the limit is enforced while streaming."""
+    set_env(monkeypatch, MAX_UPLOAD_BYTES=str(64 * 1024))
+
+    def body():
+        yield b'--x\r\nContent-Disposition: form-data; name="files"; filename="a.zip"\r\n\r\n'
+        for _ in range(100):  # 100 x 8 KB, far past the 64 KB limit
+            yield b"\0" * 8192
+        yield b"\r\n--x--\r\n"
+
+    response = client.post(
+        f"/api/patients/{patient['id']}/cases",
+        content=body(),
+        headers={**doctor_headers, "Content-Type": "multipart/form-data; boundary=x"},
+    )
+    assert response.status_code == 413
+    assert response.json()["code"] == "upload_too_large"
+    assert db.query(Case).count() == 0
+    assert staged_leftovers() == []
+
+
+def test_fr04_1_the_limit_counts_all_files_together(
+    client, doctor_headers, patient, monkeypatch, db
+):
+    files = [(f"{i:03d}.dcm", data) for i, data in enumerate(SyntheticStudy("limit").series(60))]
+    total = sum(len(data) for _, data in files)
+    set_env(monkeypatch, MAX_UPLOAD_BYTES=str(total - 1))  # each file alone is far below
+    response = upload(client, doctor_headers, patient["id"], files)
+    assert response.status_code == 413
+    assert db.query(Case).count() == 0
+    assert staged_leftovers() == []
+
+
 def test_upload_must_be_multipart(client, doctor_headers, patient):
     response = client.post(
         f"/api/patients/{patient['id']}/cases",
