@@ -4,8 +4,8 @@
     python -m app.benchmark --slices 300
 
 It generates a synthetic chest CT (no patient data), then runs exactly what the worker runs:
-DICOM loading, lung segmentation, preprocessing, previews and the installed model's
-ensemble. Nothing is stored in the database.
+DICOM loading, lung segmentation, preprocessing, previews, the installed model's
+ensemble and the heatmap. Nothing is stored in the database.
 """
 
 import argparse
@@ -36,6 +36,8 @@ def run(slices: int, size: int) -> dict:
         loaded = time.perf_counter() - started
         prepared = analyser.prepare(dicom, Path(folder) / "previews")
         result = analyser.infer(prepared)
+        heatmaps = analyser.explain(prepared, result, Path(folder) / "previews")  # M-11
+        result.seconds["heatmap"] = heatmaps.seconds["heatmap"]
         total = time.perf_counter() - started
     return {
         "slices": slices,
