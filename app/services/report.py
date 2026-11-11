@@ -140,6 +140,9 @@ def _styles() -> dict[str, ParagraphStyle]:
         "value": ParagraphStyle("value", base, fontName=FONT_BOLD, fontSize=9, leading=11.5),
         "big": ParagraphStyle("big", base, fontName=FONT_BOLD, fontSize=17, leading=21),
         "small": ParagraphStyle("small", base, fontSize=8, leading=10.5, textColor=MUTED),
+        "group": ParagraphStyle(
+            "group", base, fontName=FONT_BOLD, fontSize=8.5, leading=11, alignment=TA_CENTER
+        ),
         "caption": ParagraphStyle(
             "caption", base, fontSize=8, leading=10, textColor=MUTED, alignment=TA_CENTER
         ),
@@ -327,76 +330,60 @@ def _slice_image(path: Path, width: float) -> Image | None:
     return image
 
 
+SLICE_NOTE = (
+    "Lung window, a quarter, half and three quarters of the way down the lungs; "
+    "anterior up, the patient's right on the left."
+)
+
+
+def _image_cell(path: Path | None, width: float, caption: str, styles) -> list:
+    image = _slice_image(path, width) if path is not None else None
+    return [image or _p("Image not available", styles["caption"]), _p(caption, styles["caption"])]
+
+
 def _slices(info: ReportInput, styles) -> list:
-    names = ((info.case.result_details or {}).get("previews") or {}).get("representative") or []
+    """FR-05.3 representative slices and, when the case has one, the FR-11.2 heatmap: the 3
+    slices with the largest heatmap share, side by side so the report stays one page."""
+    details = info.case.result_details or {}
+    names = (details.get("previews") or {}).get("representative") or []
+    heatmap = details.get("heatmap") or {}
+    hot, top = heatmap.get("top_files") or [], heatmap.get("top") or []
     folder = storage.case_dir(info.case.id) / "previews"
-    width = 38 * mm
-    cells = []
-    for number in range(3):
-        image = _slice_image(folder / names[number], width) if number < len(names) else None
-        caption = _p(SLICE_CAPTIONS[number], styles["caption"])
-        cells.append([image or _p("Image not available", styles["caption"]), caption])
-    table = Table([cells], colWidths=[58 * mm] * 3)
-    table.setStyle(
-        TableStyle(
-            [
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 1),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 1),
-            ]
-        )
-    )
-    return [
-        KeepTogether(
-            [
-                _p("Representative slices", styles["h2"]),
-                table,
-                _p(
-                    "Lung window, a quarter, half and three quarters of the way down the lungs; "
-                    "anterior up, the patient's right on the left.",
-                    styles["small"],
-                ),
-            ]
-        )
+    width = 26 * mm if hot else 38 * mm
+    cells = [
+        _image_cell(folder / names[n] if n < len(names) else None, width, caption, styles)
+        for n, caption in enumerate(SLICE_CAPTIONS)
     ]
-
-
-def _heatmap(info: ReportInput, styles) -> list:
-    """FR-11.2/11.3: the 3 slices with the largest heatmap share, with the required label."""
-    heatmap = (info.case.result_details or {}).get("heatmap") or {}
-    names, top = heatmap.get("top_files") or [], heatmap.get("top") or []
-    if not names:
-        return []
-    folder = storage.case_dir(info.case.id) / "previews"
-    count = len(heatmap.get("files") or [])
-    cells = []
-    for number, name in enumerate(names):
-        image = _slice_image(folder / name, 30 * mm)
-        where = f"Slice {top[number] + 1} of {count}" if number < len(top) else ""
-        cells.append(
-            [image or _p("Image not available", styles["caption"]), _p(where, styles["caption"])]
-        )
-    table = Table([cells], colWidths=[58 * mm] * len(cells))
-    table.setStyle(
-        TableStyle(
-            [
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 1),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 1),
-            ]
-        )
-    )
-    return [
-        KeepTogether(
-            [
-                _p(f"Heatmap: what the model looked at (result {heatmap['target']})", styles["h2"]),
-                table,
-                _p(heatmap["label"], styles["small"]),
-            ]
-        )
+    if not hot:
+        table = Table([cells], colWidths=[58 * mm] * 3)
+        heading, notes = _p("Representative slices", styles["h2"]), [SLICE_NOTE]
+    else:
+        count = len(heatmap.get("files") or [])
+        cells += [
+            _image_cell(folder / name, width, f"Slice {top[n] + 1} of {count}", styles)
+            for n, name in enumerate(hot)
+        ]
+        titles = [
+            _p("Representative slices", styles["group"]),
+            "",
+            "",
+            _p(f"Heatmap: what the model looked at (result {heatmap['target']})", styles["group"]),
+            "",
+            "",
+        ][: len(cells)]
+        table = Table([titles, cells], colWidths=[29.5 * mm] * len(cells))
+        heading = _p("Slices", styles["h2"])
+        notes = [f"Left: {SLICE_NOTE[0].lower()}{SLICE_NOTE[1:]}", f"Right: {heatmap['label']}"]
+    style = [
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 1),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 1),
     ]
+    if hot:
+        style += [("SPAN", (0, 0), (2, 0)), ("SPAN", (3, 0), (len(cells) - 1, 0))]
+    table.setStyle(TableStyle(style))
+    return [KeepTogether([heading, table, *(_p(n, styles["small"]) for n in notes)])]
 
 
 def _model(info: ReportInput, styles) -> list:
@@ -514,7 +501,6 @@ def build_report(info: ReportInput) -> bytes:
     story += _scan(info, styles)
     story += _result(info, styles)
     story += _slices(info, styles)
-    story += _heatmap(info, styles)
     story += _model(info, styles)
     story += _closing(info, styles)
 
