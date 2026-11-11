@@ -129,7 +129,7 @@ def test_fr07_2_report_contains_every_required_item(
         else f"Result {result['predicted_class']}"
     )
     assert label in text
-    assert pdf_image_placements(data) == 3  # the 3 representative slices (FR-05.3)
+    assert pdf_image_placements(data) == 6  # 3 representative slices (FR-05.3), 3 heatmap
     assert len(pypdf.PdfReader(io.BytesIO(data)).pages) == 1  # one printed A4 page
     assert "Slice thickness" in text and "Pixel spacing" in text
 

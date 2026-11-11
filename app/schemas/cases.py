@@ -67,6 +67,16 @@ class ValidatedPerformance(BaseModel):
     dataset: str | None
 
 
+class HeatmapInfo(BaseModel):
+    """M-11 (FR-11.1 to FR-11.3): the Grad-CAM overlays of this case."""
+
+    label: str
+    target: str  # the class the heatmap explains
+    count: int  # one overlay per preview slice
+    top: list[int]  # preview indices with the largest heatmap share, largest first
+    lung_share: float | None  # share of the heatmap energy inside the lungs
+
+
 class ResultModel(BaseModel):
     name: str
     version: str
@@ -97,6 +107,7 @@ class ResultOut(BaseModel):
     step_seconds: dict[str, float]
     lung_volume_ml: float | None
     preview_count: int
+    heatmap: HeatmapInfo | None = None
     completed_at: datetime | None
 
 

@@ -4,7 +4,13 @@ from pathlib import Path
 
 from app.core.clock import as_utc
 from app.models import Case, CaseStatus, Patient
-from app.schemas.cases import CasePatient, ResultModel, ResultOut, ValidatedPerformance
+from app.schemas.cases import (
+    CasePatient,
+    HeatmapInfo,
+    ResultModel,
+    ResultOut,
+    ValidatedPerformance,
+)
 from app.services import storage
 from app.services.errors import NotFound
 from app.services.model_store import DEMO_BANNER
@@ -64,8 +70,34 @@ def result_for(case: Case, patient: Patient) -> ResultOut:
         step_seconds=details.get("seconds", {}),
         lung_volume_ml=details.get("lung_volume_ml"),
         preview_count=int((details.get("previews") or {}).get("count", 0)),
+        heatmap=heatmap_info(details),
         completed_at=as_utc(case.completed_at),
     )
+
+
+def heatmap_info(details: dict) -> HeatmapInfo | None:
+    """M-11: present for cases analysed since the heatmap was added (Phase 10)."""
+    heatmap = details.get("heatmap")
+    if not heatmap or not heatmap.get("files"):
+        return None
+    return HeatmapInfo(
+        label=heatmap["label"],
+        target=heatmap["target"],
+        count=len(heatmap["files"]),
+        top=list(heatmap.get("top") or []),
+        lung_share=heatmap.get("lung_share"),
+    )
+
+
+def heatmap_path(case: Case, index: int) -> Path:
+    """FR-11.2: the transparent heatmap overlay of preview `index`."""
+    files = ((case.result_details or {}).get("heatmap") or {}).get("files") or []
+    if not has_result(case) or not 0 <= index < len(files):
+        raise NotFound("Heatmap not found.")
+    path = storage.case_dir(case.id) / "previews" / files[index]
+    if not path.is_file():
+        raise NotFound("Heatmap not found.")
+    return path
 
 
 def preview_path(case: Case, index: int) -> Path:

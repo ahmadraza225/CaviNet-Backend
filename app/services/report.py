@@ -362,6 +362,43 @@ def _slices(info: ReportInput, styles) -> list:
     ]
 
 
+def _heatmap(info: ReportInput, styles) -> list:
+    """FR-11.2/11.3: the 3 slices with the largest heatmap share, with the required label."""
+    heatmap = (info.case.result_details or {}).get("heatmap") or {}
+    names, top = heatmap.get("top_files") or [], heatmap.get("top") or []
+    if not names:
+        return []
+    folder = storage.case_dir(info.case.id) / "previews"
+    count = len(heatmap.get("files") or [])
+    cells = []
+    for number, name in enumerate(names):
+        image = _slice_image(folder / name, 30 * mm)
+        where = f"Slice {top[number] + 1} of {count}" if number < len(top) else ""
+        cells.append(
+            [image or _p("Image not available", styles["caption"]), _p(where, styles["caption"])]
+        )
+    table = Table([cells], colWidths=[58 * mm] * len(cells))
+    table.setStyle(
+        TableStyle(
+            [
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 1),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 1),
+            ]
+        )
+    )
+    return [
+        KeepTogether(
+            [
+                _p(f"Heatmap: what the model looked at (result {heatmap['target']})", styles["h2"]),
+                table,
+                _p(heatmap["label"], styles["small"]),
+            ]
+        )
+    ]
+
+
 def _model(info: ReportInput, styles) -> list:
     result = info.result
     model, performance = result.model, result.validated_performance
@@ -477,6 +514,7 @@ def build_report(info: ReportInput) -> bytes:
     story += _scan(info, styles)
     story += _result(info, styles)
     story += _slices(info, styles)
+    story += _heatmap(info, styles)
     story += _model(info, styles)
     story += _closing(info, styles)
 
