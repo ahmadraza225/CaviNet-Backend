@@ -38,9 +38,22 @@ jobs:
       TEST_REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
+      # A change that spans both repositories uses the same branch name in each: test against
+      # CaviNet-ML's branch of that name when it exists, otherwise its main branch.
+      - name: Choose the CaviNet-ML branch
+        id: ml
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          if git ls-remote --exit-code --heads https://github.com/ahmadraza225/CaviNet-ML.git "$BRANCH" >/dev/null; then
+            echo "ref=$BRANCH" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
         with:
           repository: ahmadraza225/CaviNet-ML
+          ref: ${{ steps.ml.outputs.ref }}
           path: .cavinet-ml
       - uses: actions/setup-python@v5
         with:
