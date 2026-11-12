@@ -64,7 +64,12 @@ def test_fr04_1_several_dcm_files_are_accepted(client, doctor_headers, patient):
         client, doctor_headers, patient["id"], [(f"IM{i}.dcm", d) for i, d in enumerate(files)]
     )
     assert body["status"] == "queued"
-    assert body["upload"] == {"kind": "dcm", "files": 52, "bytes": sum(len(d) for d in files)}
+    assert body["upload"] == {
+        "kind": "dcm",
+        "files": 52,
+        "bytes": sum(len(d) for d in files),
+        "symptoms": None,
+    }
     assert body["scan"]["num_slices"] == 52
 
 
@@ -361,7 +366,12 @@ def test_upload_is_audited_without_patient_identity(client, doctor, doctor_heade
     assert len(entries) == 1
     entry = entries[0]
     assert (entry.user_id, entry.target_type, entry.target_id) == (doctor.id, "case", body["id"])
-    assert entry.details == {"kind": "zip", "files": 1, "size_mb": round(len(data) / 1024**2, 1)}
+    assert entry.details == {
+        "kind": "zip",
+        "files": 1,
+        "size_mb": round(len(data) / 1024**2, 1),
+        "symptoms_entered": False,
+    }
     dump = json.dumps([[e.target_id, e.details] for e in audit_entries(db)])
     for identifier in ("Amina", "Bibi", "MR-1001"):
         assert identifier not in dump

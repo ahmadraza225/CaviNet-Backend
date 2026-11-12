@@ -68,6 +68,10 @@ class Case(TimestampMixin, Base):
     upload_files: Mapped[int] = mapped_column(Integer, nullable=False)
     upload_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
+    # FR-12.1: symptoms ticked at upload (dataset keys such as "night_sweats"). None = not
+    # entered (CT-only result); [] = entered, none present.
+    symptoms: Mapped[list[str] | None] = mapped_column(JSON)
+
     # Series selection (FR-04.3): how many image series were found and which one was used.
     series_found: Mapped[int | None] = mapped_column(Integer)
     series_number: Mapped[int | None] = mapped_column(Integer)

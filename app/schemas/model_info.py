@@ -12,6 +12,8 @@ class ModelStatus(BaseModel):
     model_version: str | None
     created_at: str | None
     demo_banner: str | None
+    # M-12: symptom-assisted prediction parameters are installed for this model.
+    symptom_assisted: bool = False
 
 
 class ModelInfo(BaseModel):

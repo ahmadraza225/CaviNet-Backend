@@ -17,7 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.models import Case, CaseStatus
+from app.models import Case, CaseStatus, Patient
+from app.schemas.patients import age_on
 from app.services import cases, model_store, storage
 from app.services.model_store import ModelUnavailable
 
@@ -49,7 +50,47 @@ def _explain(analyser, prepared, result, preview_dir) -> dict | None:
     return heatmaps.to_dict()
 
 
-def _store_result(case: Case, result, heatmap: dict | None = None) -> None:
+def _combine(db: Session, case: Case, result, get_fusion: Callable[[], object]) -> dict | None:
+    """M-12 (FR-12.2): the CT result combined with age, sex and the symptoms entered at
+    upload. Only when symptoms were entered and parameters for this model are installed; a
+    failure here never fails the case (the CT result stands on its own)."""
+    if case.symptoms is None:
+        return None
+    try:
+        fusion = get_fusion()
+        if fusion is None:
+            return None
+        from cavinet_ml.inference.decision import decide
+
+        patient = db.get(Patient, case.patient_id)
+        scan_date = case.study_date or case.created_at.date()
+        age = age_on(patient.date_of_birth, scan_date) if patient else None
+        sex = patient.sex if patient else None
+        probability = fusion.predict(
+            ct_logit=result.logit, age=age, sex=sex, symptoms=case.symptoms
+        )
+        decision = decide(probability).to_dict()
+    except Exception as error:  # noqa: BLE001
+        logger.error("The combined result could not be made: %s", type(error).__name__)
+        return None
+    return {
+        "predicted_class": decision["predicted_class"],
+        "probability_tb": round(float(decision["probability_tb"]), 6),
+        "probability_tb_pct": decision["probability_tb_pct"],
+        "confidence": round(float(decision["confidence"]), 6),
+        "confidence_pct": decision["confidence_pct"],
+        "band": decision["band"],
+        "inconclusive": decision["inconclusive"],
+        "explanation": decision["explanation"],
+        "inputs": {"age": age, "sex": sex, "symptoms": list(case.symptoms)},
+        "fusion_version": fusion.version,
+        "is_demo": fusion.is_demo,
+    }
+
+
+def _store_result(
+    case: Case, result, heatmap: dict | None = None, combined: dict | None = None
+) -> None:
     decision = result.decision
     case.result_label = decision["predicted_class"]
     case.result_is_stub = False
@@ -85,10 +126,13 @@ def _store_result(case: Case, result, heatmap: dict | None = None) -> None:
             "metrics": result.model["metrics"],
         },
         "heatmap": heatmap,
+        "combined": combined,
     }
 
 
-def _analyse(db: Session, case: Case, analyser) -> str:
+def _analyse(
+    db: Session, case: Case, analyser, get_fusion: Callable[[], object] = model_store.get_fusion
+) -> str:
     preview_dir = storage.case_dir(case.id) / "previews"
     storage.remove_paths([preview_dir])  # nothing left over from an interrupted attempt
     if case.status == CaseStatus.QUEUED:
@@ -100,7 +144,8 @@ def _analyse(db: Session, case: Case, analyser) -> str:
         db.commit()
     result = analyser.infer(prepared)
     heatmap = _explain(analyser, prepared, result, preview_dir)
-    _store_result(case, result, heatmap)
+    combined = _combine(db, case, result, get_fusion)
+    _store_result(case, result, heatmap, combined)
     decision = result.decision
     cases.set_status(
         db,
@@ -118,6 +163,7 @@ def run(
     case_id: uuid.UUID,
     *,
     get_analyser: Callable[[], object] = model_store.get_analyser,
+    get_fusion: Callable[[], object] = model_store.get_fusion,
     sleep: Callable[[float], None] = time.sleep,
 ) -> str:
     """Analyse one case. Returns the final status, or why the job did nothing."""
@@ -136,7 +182,7 @@ def run(
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            return _analyse(db, case, analyser)
+            return _analyse(db, case, analyser, get_fusion)
         except PipelineError as error:
             db.rollback()
             case = db.get(Case, case_id)

@@ -6,16 +6,22 @@ from app.core.clock import as_utc
 from app.models import Case, CaseStatus, Patient
 from app.schemas.cases import (
     CasePatient,
+    CombinedResult,
     HeatmapInfo,
     ResultModel,
     ResultOut,
     ValidatedPerformance,
+    symptom_names,
 )
 from app.services import storage
 from app.services.errors import NotFound
 from app.services.model_store import DEMO_BANNER
 
 DISCLAIMER = "Decision support only. Not a diagnosis. Confirm with laboratory tests."
+NO_COMBINED = (
+    "Symptoms were entered, but no symptom-assisted model is installed for this AI model, "
+    "so only the CT result is shown."
+)
 
 
 def _no_result() -> NotFound:
@@ -71,7 +77,33 @@ def result_for(case: Case, patient: Patient) -> ResultOut:
         lung_volume_ml=details.get("lung_volume_ml"),
         preview_count=int((details.get("previews") or {}).get("count", 0)),
         heatmap=heatmap_info(details),
+        symptoms=symptom_names(case.symptoms),
+        combined=combined_info(details),
+        combined_note=NO_COMBINED
+        if case.symptoms is not None and not details.get("combined")
+        else None,
         completed_at=as_utc(case.completed_at),
+    )
+
+
+def combined_info(details: dict) -> CombinedResult | None:
+    """M-12: present when symptoms were entered and a fusion model was installed."""
+    combined = details.get("combined")
+    if not combined:
+        return None
+    inputs = combined.get("inputs") or {}
+    return CombinedResult(
+        predicted_class=combined["predicted_class"],
+        probability_tb_pct=combined["probability_tb_pct"],
+        confidence_pct=combined["confidence_pct"],
+        band=combined["band"],
+        inconclusive=bool(combined["inconclusive"]),
+        explanation=combined["explanation"],
+        age=inputs.get("age"),
+        sex=inputs.get("sex"),
+        symptoms=symptom_names(inputs.get("symptoms") or []) or [],
+        fusion_version=str(combined.get("fusion_version", "")),
+        is_demo=bool(combined.get("is_demo")),
     )
 
 

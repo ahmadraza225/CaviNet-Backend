@@ -77,6 +77,7 @@ def model_status() -> dict[str, Any]:
             "model_name": None,
             "model_version": None,
             "created_at": None,
+            "symptom_assisted": False,
         }
     return {
         "installed": True,
@@ -84,6 +85,7 @@ def model_status() -> dict[str, Any]:
         "model_name": info["model_name"],
         "model_version": info.get("model_version") or info["created_at"],
         "created_at": info["created_at"],
+        "symptom_assisted": get_fusion() is not None,
     }
 
 
@@ -113,9 +115,48 @@ def get_analyser():
         raise ModelUnavailable(UNREADABLE) from error
 
 
+@lru_cache(maxsize=2)
+def _weights_sha256(key: tuple[str, int, int]) -> str:
+    from cavinet_ml.fetch import bundle_weights_sha256
+    from cavinet_ml.model.bundle import load_bundle
+
+    return bundle_weights_sha256(load_bundle(key[0], mmap=True))
+
+
+@lru_cache(maxsize=2)
+def _fusion(fusion_key: tuple[str, int, int], weights: str):
+    from cavinet_ml.fusion import load_fusion
+
+    fusion = load_fusion(fusion_key[0])
+    return fusion if fusion.matches(weights) else None
+
+
+def get_fusion():
+    """M-12: the symptom-assisted prediction parameters fitted for the installed model
+    (`cavinet_fusion.json` next to it), or None: then only the CT result is shown."""
+    from cavinet_ml.fusion import FUSION_FILE
+
+    key = _file_key(model_path())
+    fusion_key = _file_key(model_path().with_name(FUSION_FILE))
+    if key is None or fusion_key is None:
+        return None
+    try:
+        fusion = _fusion(fusion_key, _weights_sha256(key))
+    except Exception as error:  # noqa: BLE001 - FusionError, OSError, …
+        logger.error(
+            "The symptom-assisted prediction file cannot be used: %s", type(error).__name__
+        )
+        return None
+    if fusion is None:
+        logger.warning("The symptom-assisted prediction file is for another model; ignored")
+    return fusion
+
+
 def clear_caches() -> None:
     _metadata.cache_clear()
     _analyser.cache_clear()
+    _weights_sha256.cache_clear()
+    _fusion.cache_clear()
 
 
 def configure_threads() -> None:

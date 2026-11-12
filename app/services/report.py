@@ -139,6 +139,7 @@ def _styles() -> dict[str, ParagraphStyle]:
         "label": ParagraphStyle("label", base, fontSize=7.5, leading=9, textColor=MUTED),
         "value": ParagraphStyle("value", base, fontName=FONT_BOLD, fontSize=9, leading=11.5),
         "big": ParagraphStyle("big", base, fontName=FONT_BOLD, fontSize=17, leading=21),
+        "medium": ParagraphStyle("medium", base, fontName=FONT_BOLD, fontSize=12, leading=15),
         "small": ParagraphStyle("small", base, fontSize=8, leading=10.5, textColor=MUTED),
         "group": ParagraphStyle(
             "group", base, fontName=FONT_BOLD, fontSize=8.5, leading=11, alignment=TA_CENTER
@@ -273,17 +274,17 @@ def _scan(info: ReportInput, styles) -> list:
     ]
 
 
-def _result(info: ReportInput, styles) -> list:
-    result = info.result
-    headline = (
-        f"Inconclusive (leans towards {result.predicted_class})"
-        if result.inconclusive
-        else result.predicted_class
-    )
+def _headline(result) -> str:
+    if result.inconclusive:
+        return f"Inconclusive (leans towards {result.predicted_class})"
+    return result.predicted_class
+
+
+def _summary(result, label: str, styles) -> Table:
     summary = Table(
         [
             [
-                [_p("Result", styles["label"]), _p(headline, styles["big"])],
+                [_p(label, styles["label"]), _p(_headline(result), styles["big"])],
                 [
                     _p("Probability of TB", styles["label"]),
                     _p(f"{result.probability_tb_pct:.1f}%", styles["big"]),
@@ -306,14 +307,79 @@ def _result(info: ReportInput, styles) -> list:
             ]
         )
     )
-    parts = [
-        _p("AI result", styles["h2"]),
-        summary,
-        Spacer(1, 5),
-        _p(f"Confidence band: {result.band}. {result.explanation}", styles["base"]),
-        Spacer(1, 2),
-        _p(BAND_LEGEND, styles["small"]),
-    ]
+    return summary
+
+
+def _combined_inputs(combined) -> str:
+    symptoms = ", ".join(combined.symptoms) if combined.symptoms else "none of the 12 listed"
+    age = f"{combined.age} years" if combined.age is not None else "unknown"
+    sex = combined.sex or "unknown"
+    return (
+        f"CT + symptoms: the CT result combined with age ({age}), sex ({sex}) and the symptoms "
+        f"entered at upload: {symptoms}. Symptom-assisted model {combined.fusion_version}."
+    )
+
+
+def _comparison(result, combined, styles) -> Table:
+    """M-12: CT-only and combined results in one compact table, so the report stays one page."""
+
+    def row(label: str, r) -> list:
+        return [
+            _p(label, styles["value"]),
+            _p(_headline(r), styles["medium"]),
+            _p(f"{r.probability_tb_pct:.1f}%", styles["medium"]),
+            _p(f"{r.confidence_pct:.1f}% ({r.band})", styles["medium"]),
+        ]
+
+    table = Table(
+        [
+            [
+                _p("", styles["label"]),
+                _p("Result", styles["label"]),
+                _p("Probability of TB", styles["label"]),
+                _p("Confidence", styles["label"]),
+            ],
+            row("CT only", result),
+            row("CT + symptoms", combined),
+        ],
+        colWidths=[44 * mm, 52 * mm, 34 * mm, 44 * mm],
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), PANEL),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LINEBELOW", (0, 1), (-1, 1), 0.5, RULE),
+            ]
+        )
+    )
+    return table
+
+
+def _result(info: ReportInput, styles) -> list:
+    """FR-06.1 result; with symptoms entered (M-12, FR-12.3), CT-only and combined results."""
+    result = info.result
+    combined = result.combined
+    if combined:
+        parts = [
+            _p("AI result", styles["h2"]),
+            _comparison(result, combined, styles),
+            Spacer(1, 4),
+            _p(f"CT only: confidence band {result.band}. {result.explanation}", styles["base"]),
+            _p(_combined_inputs(combined), styles["small"]),
+        ]
+    else:
+        parts = [
+            _p("AI result", styles["h2"]),
+            _summary(result, "Result", styles),
+            Spacer(1, 5),
+            _p(f"Confidence band: {result.band}. {result.explanation}", styles["base"]),
+        ]
+        if result.combined_note:
+            parts += [Spacer(1, 2), _p(result.combined_note, styles["small"])]
+    parts += [Spacer(1, 2), _p(BAND_LEGEND, styles["small"])]
     if result.warnings:
         parts.append(Spacer(1, 4))
         parts.append(_p("Warnings: " + " ".join(result.warnings), styles["small"]))
