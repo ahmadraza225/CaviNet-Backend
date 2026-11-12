@@ -266,6 +266,7 @@ def test_model_status_without_a_model(client, doctor_headers, monkeypatch, tmp_p
         "model_version": None,
         "created_at": None,
         "demo_banner": None,
+        "symptom_assisted": False,
     }
 
 

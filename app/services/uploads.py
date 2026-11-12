@@ -4,8 +4,13 @@ The request body (multipart/form-data) is parsed chunk by chunk and each file pa
 written to DATA_DIR/staging/<id>/ as it arrives, so a 1.5 GB upload never sits in memory or
 in a second temporary copy. File names are only used for their extension; they are never
 stored or logged (they can contain patient names).
+
+An optional form field "symptoms" (FR-12.1) carries the symptoms the doctor ticked, as a
+JSON list of the dataset's symptom keys (e.g. ["cough", "fever"]); an empty list means "none
+of these". Without the field no symptoms were entered and only the CT result is shown.
 """
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO
@@ -19,6 +24,8 @@ from app.services.errors import InvalidInput, PayloadTooLarge, UnsupportedMediaT
 
 # Allowance for multipart boundaries and headers on top of the file bytes.
 FORM_OVERHEAD_BYTES = 16 * 1024 * 1024
+SYMPTOMS_FIELD = b"symptoms"
+MAX_FIELD_BYTES = 4096
 
 
 def _size(n: int) -> str:
@@ -49,6 +56,26 @@ class StagedUpload:
     upload: Upload
     files: int
     total_bytes: int
+    # FR-12.1: None = not entered; [] = entered, none present.
+    symptoms: list[str] | None = None
+
+
+def parse_symptoms(raw: bytes) -> list[str]:
+    """The ticked symptoms, in the dataset's order, from the form field's JSON list."""
+    from cavinet_ml.fusion import SYMPTOM_NAMES
+
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        value = None
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise InvalidInput(
+            "The symptoms could not be read. Tick the symptoms again.", code="bad_symptoms"
+        )
+    unknown = sorted(set(value) - set(SYMPTOM_NAMES))
+    if unknown:
+        raise InvalidInput(f"Unknown symptom: {', '.join(unknown)}.", code="bad_symptoms")
+    return [key for key in SYMPTOM_NAMES if key in value]
 
 
 class _Receiver:
@@ -60,6 +87,8 @@ class _Receiver:
         self.others: list[Path] = []
         self._part = _Part()
         self._file: BinaryIO | None = None
+        self._field: bytearray | None = None
+        self.symptoms_raw: bytes | None = None
 
     # python-multipart callbacks
     def on_part_begin(self) -> None:
@@ -79,7 +108,9 @@ class _Receiver:
         _, params = parse_options_header(self._part.headers.get(b"content-disposition", b""))
         filename = params.get(b"filename")
         if filename is None:
-            return  # an ordinary form field: ignored
+            if params.get(b"name") == SYMPTOMS_FIELD:
+                self._field = bytearray()
+            return  # any other form field is ignored
         is_zip = filename.decode("utf-8", "replace").lower().endswith(".zip")
         count = len(self.zips) + len(self.others) + 1
         path = self.staging / f"{count:05d}{'.zip' if is_zip else '.dcm'}"
@@ -87,6 +118,11 @@ class _Receiver:
         self._file = path.open("wb")
 
     def on_part_data(self, data: bytes, start: int, end: int) -> None:
+        if self._field is not None:
+            self._field += data[start:end]
+            if len(self._field) > MAX_FIELD_BYTES:
+                raise InvalidInput("The symptoms field is too long.", code="bad_symptoms")
+            return
         if self._file is None:
             return
         self.total += end - start
@@ -95,6 +131,9 @@ class _Receiver:
         self._file.write(data[start:end])
 
     def on_part_end(self) -> None:
+        if self._field is not None:
+            self.symptoms_raw = bytes(self._field)
+            self._field = None
         self.close()
 
     def close(self) -> None:
@@ -152,4 +191,7 @@ async def receive(request: Request, staging: Path, max_bytes: int) -> StagedUplo
         raise InvalidInput("Upload one .zip file at a time.", code="several_zips")
     paths = receiver.zips or receiver.others
     kind = "zip" if receiver.zips else "dcm"
-    return StagedUpload(Upload(kind, paths), files=len(paths), total_bytes=receiver.total)
+    symptoms = None if receiver.symptoms_raw is None else parse_symptoms(receiver.symptoms_raw)
+    return StagedUpload(
+        Upload(kind, paths), files=len(paths), total_bytes=receiver.total, symptoms=symptoms
+    )

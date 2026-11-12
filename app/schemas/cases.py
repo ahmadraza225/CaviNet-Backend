@@ -9,6 +9,15 @@ from app.core.clock import as_utc
 from app.models import Case, Patient
 
 
+def symptom_names(keys: list[str] | None) -> list[str] | None:
+    """Display names ("Night sweats") for stored symptom keys ("night_sweats")."""
+    if keys is None:
+        return None
+    from cavinet_ml.fusion import SYMPTOM_NAMES
+
+    return [SYMPTOM_NAMES.get(key, key) for key in keys]
+
+
 class CasePatient(BaseModel):
     id: uuid.UUID
     full_name: str
@@ -42,6 +51,8 @@ class UploadDetails(BaseModel):
     kind: str
     files: int
     bytes: int
+    # FR-12.1: symptom names ticked at upload; None = not entered.
+    symptoms: list[str] | None = None
 
 
 class CaseResult(BaseModel):
@@ -77,6 +88,22 @@ class HeatmapInfo(BaseModel):
     lung_share: float | None  # share of the heatmap energy inside the lungs
 
 
+class CombinedResult(BaseModel):
+    """M-12 (FR-12.2, FR-12.3): the CT result combined with age, sex and symptoms."""
+
+    predicted_class: str
+    probability_tb_pct: float
+    confidence_pct: float
+    band: str
+    inconclusive: bool
+    explanation: str
+    age: int | None
+    sex: str | None
+    symptoms: list[str]  # display names of the symptoms present
+    fusion_version: str
+    is_demo: bool
+
+
 class ResultModel(BaseModel):
     name: str
     version: str
@@ -108,6 +135,11 @@ class ResultOut(BaseModel):
     lung_volume_ml: float | None
     preview_count: int
     heatmap: HeatmapInfo | None = None
+    # M-12: symptom names entered at upload (None = not entered), the combined result, and
+    # why there is none although symptoms were entered.
+    symptoms: list[str] | None = None
+    combined: CombinedResult | None = None
+    combined_note: str | None = None
     completed_at: datetime | None
 
 
@@ -175,7 +207,10 @@ class CaseOut(BaseModel):
                 for event in case.events
             ],
             upload=UploadDetails(
-                kind=case.upload_kind, files=case.upload_files, bytes=case.upload_bytes
+                kind=case.upload_kind,
+                files=case.upload_files,
+                bytes=case.upload_bytes,
+                symptoms=symptom_names(case.symptoms),
             ),
             scan=scan,
             result=result,

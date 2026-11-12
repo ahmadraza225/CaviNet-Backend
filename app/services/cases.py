@@ -104,6 +104,7 @@ def create_case(db: Session, actor: User, patient: Patient, staged: StagedUpload
         upload_kind=staged.upload.kind,
         upload_files=staged.files,
         upload_bytes=staged.total_bytes,
+        symptoms=staged.symptoms,
     )
     db.add(case)
     db.flush()
@@ -118,6 +119,7 @@ def create_case(db: Session, actor: User, patient: Patient, staged: StagedUpload
             "kind": staged.upload.kind,
             "files": staged.files,
             "size_mb": round(staged.total_bytes / 1024**2, 1),
+            "symptoms_entered": staged.symptoms is not None,
         },
     )
     db.commit()
