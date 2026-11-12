@@ -90,6 +90,7 @@ ROLE_MATRIX = {
     "GET /api/cases/{case_id}/result": DOCTOR,
     "GET /api/cases/{case_id}/report": DOCTOR,
     "GET /api/cases/{case_id}/previews/{index}": DOCTOR,
+    "GET /api/cases/{case_id}/heatmaps/{index}": DOCTOR,
     # Receive case notifications: doctor.
     "GET /api/notifications": DOCTOR,
     "GET /api/notifications/unread-count": DOCTOR,

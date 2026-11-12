@@ -37,7 +37,19 @@ def _analysing_note(analyser) -> str:
     return f"{note} DEMO MODEL: NOT FOR CLINICAL USE." if ensemble.is_demo else note
 
 
-def _store_result(case: Case, result) -> None:
+def _explain(analyser, prepared, result, preview_dir) -> dict | None:
+    """M-11 heatmaps. They explain the result, so a failure here never fails the case."""
+    try:
+        heatmaps = analyser.explain(prepared, result, preview_dir)
+    except Exception as error:  # noqa: BLE001
+        logger.error("The heatmap could not be made: %s", type(error).__name__)
+        return None
+    result.seconds["heatmap"] = heatmaps.seconds.get("heatmap", 0.0)
+    result.seconds["total"] = round(result.seconds["total"] + result.seconds["heatmap"], 3)
+    return heatmaps.to_dict()
+
+
+def _store_result(case: Case, result, heatmap: dict | None = None) -> None:
     decision = result.decision
     case.result_label = decision["predicted_class"]
     case.result_is_stub = False
@@ -72,6 +84,7 @@ def _store_result(case: Case, result) -> None:
             "folds": result.model["folds"],
             "metrics": result.model["metrics"],
         },
+        "heatmap": heatmap,
     }
 
 
@@ -86,7 +99,8 @@ def _analyse(db: Session, case: Case, analyser) -> str:
         cases.set_status(db, case, CaseStatus.ANALYSING, _analysing_note(analyser))
         db.commit()
     result = analyser.infer(prepared)
-    _store_result(case, result)
+    heatmap = _explain(analyser, prepared, result, preview_dir)
+    _store_result(case, result, heatmap)
     decision = result.decision
     cases.set_status(
         db,

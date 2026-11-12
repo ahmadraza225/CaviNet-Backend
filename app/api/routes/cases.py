@@ -108,6 +108,22 @@ def download_report(
     )
 
 
+@router.get("/cases/{case_id}/heatmaps/{index}", response_class=FileResponse)
+def get_heatmap(
+    case_id: uuid.UUID,
+    _: DoctorUser,
+    db: DbSession,
+    index: int = Path(ge=0, le=999),
+) -> FileResponse:
+    """FR-11.2: the heatmap overlay (transparent PNG) of preview slice `index`."""
+    case = cases_service.get_or_404(db, case_id)
+    return FileResponse(
+        results.heatmap_path(case, index),
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
 @router.get("/cases/{case_id}/previews/{index}", response_class=FileResponse)
 def get_preview(
     case_id: uuid.UUID,
